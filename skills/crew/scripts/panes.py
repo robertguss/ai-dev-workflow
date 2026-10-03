@@ -124,14 +124,20 @@ def restart(role: str) -> dict:
     pane = agents_in_tab().get(names()[role])
     if not pane:
         sys.exit(json.dumps({"error": f"no live {role} agent; run setup"}))
-    for attempt in range(4):
+    # Claude Code exits on /exit; a lone ctrl+c only arms "press again to exit".
+    herdr("pane", "send-text", pane, "/exit")
+    herdr("pane", "send-keys", pane, "enter")
+    for keys in ([], ["ctrl+c", "ctrl+c"], ["ctrl+d", "ctrl+d"]):
+        if keys:
+            herdr("agent", "send-keys", pane, *keys)
+        for _ in range(8):
+            if claude_proc(pane) is None:
+                break
+            time.sleep(1)
         if claude_proc(pane) is None:
             break
-        herdr("agent", "send-keys", pane, "ctrl+c" if attempt < 2 else "ctrl+d")
-        time.sleep(1.5)
     else:
-        if claude_proc(pane) is not None:
-            sys.exit(json.dumps({"error": f"{role} pane {pane} did not return to the shell"}))
+        sys.exit(json.dumps({"error": f"{role} pane {pane} did not return to the shell"}))
     start(role, pane)
     return {"restarted": role, "pane": pane} | check()
 
