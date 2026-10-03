@@ -80,7 +80,15 @@ def agents_in_tab() -> dict[str, str]:
 
 
 def start(role: str, pane: str) -> None:
-    herdr("agent", "start", names()[role], "--kind", "claude", "--pane", pane, "--timeout", "90000", "--", *launch_args(role))
+    args = ["herdr", "agent", "start", names()[role], "--kind", "claude", "--pane", pane, "--timeout", "90000", "--", *launch_args(role)]
+    # Herdr releases an exited agent's name a moment after the process ends.
+    for _ in range(10):
+        out = subprocess.run(args, capture_output=True, text=True)
+        if out.returncode == 0 or "agent_name_taken" not in (out.stderr + out.stdout):
+            break
+        time.sleep(2)
+    if out.returncode != 0:
+        sys.exit(json.dumps({"error": f"start {role}", "detail": (out.stderr or out.stdout).strip()}))
     herdr("pane", "rename", pane, role)
 
 
