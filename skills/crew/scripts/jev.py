@@ -1,0 +1,241 @@
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["typesafe-sdk>=0.7.2"]
+# ///
+"""Jev judgments for the crew loop. Prints one JSON object; the driver follows it.
+
+  jev.py gate  --issue ID --phase plan|diff --brief FILE [--report FILE] [--previous-report FILE] [--files "a b"]
+      Does this step need the (costly) Fable oracle, or can the driver review it itself?
+  jev.py fresh --issue ID --role builder|oracle|driver --pane PANE [--next FILE]
+      Should this pane's Claude session be restarted fresh before the next step?
+
+Jev answers the fuzzy questions; the thresholds below decide. Every decision is
+logged by crewlog.py with an `id`; log the review that follows with `--decision <id>`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import random
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import crewlog  # noqa: E402
+
+MODEL = "jev-1.13.0"
+FNOX_GLOBAL = Path.home() / ".config/fnox/config.toml"
+
+# gate: any risk flag at or above FLAG_AT, or stakes at or above STAKES_AT, sends the step to Fable.
+FLAG_AT = 0.7
+STAKES_AT = 1.5
+# Spot checks: this share of steps judged routine still go to the oracle, so the log can
+# show what the gate misses. Set CREW_AUDIT_RATE=0 to turn off.
+AUDIT_RATE = float(os.environ.get("CREW_AUDIT_RATE", "0.1"))
+# fresh: context sizes (tokens) per role. Above HARD always restart; above SOFT restart
+# when the next step is unrelated to what the session has been doing.
+CONTEXT = {
+    "builder": {"soft": 60_000, "hard": 150_000},
+    "oracle": {"soft": 60_000, "hard": 120_000},
+    "driver": {"soft": 250_000, "hard": 400_000},
+}
+STRUGGLING_AT = 0.7
+RELATED_AT = 0.5
+
+RISKS = {
+    "security": "Does the step in `step` change authentication, authorization, secrets, permissions, or who can see data?",
+    "data": "Can the step in `step` change or delete stored data in a way that is hard to undo, such as a migration, backfill, or deletion of records?",
+    "concurrency": "Does the step in `step` involve concurrency, locking, retries, caching, or consistency between services?",
+    "money": "Does the step in `step` affect payments, refunds, billing, or charges?",
+    "contract": "Does the step in `step` change a public API, schema, or contract that other systems or clients depend on?",
+    "architecture": "Is the step in `step` a long-lived design decision that is expensive to reverse later?",
+}
+STAKES_LEVELS = [
+    "Cosmetic or obvious at once, and trivial to revert",
+    "A visible bug for some users, fixed with a normal patch",
+    "Real harm that is hard to undo: lost or corrupted data, a security hole, wrong charges, or broken clients",
+]
+
+
+def api_key() -> str:
+    if key := os.environ.get("TYPESAFE_API_KEY"):
+        return key
+    for args in (["fnox", "get", "TYPESAFE_API_KEY"], ["fnox", "-c", str(FNOX_GLOBAL), "get", "TYPESAFE_API_KEY"]):
+        try:
+            out = subprocess.run(args, capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    sys.exit(json.dumps({"error": "no TYPESAFE_API_KEY in the environment or fnox"}))
+
+
+def ask(state: dict, questions: dict):
+    from typesafe_sdk import TypeSafeClient
+
+    with TypeSafeClient(api_key=api_key()) as client:
+        return client.system_one(state=state, questions=questions, model=MODEL)
+
+
+def read(path: str | None, limit: int = 12_000) -> str:
+    return Path(path).read_text()[:limit] if path else ""
+
+
+# ---------- gate ----------
+
+
+def gate_questions(has_report: bool) -> dict:
+    from typesafe_sdk import Noul, Score
+
+    questions = {"stakes": Score(
+        instructions="If the step in `step` ships with a subtle mistake, how bad is the damage?",
+        criteria=STAKES_LEVELS,
+    )}
+    questions |= {name: Noul(instructions=text) for name, text in RISKS.items()}
+    if has_report:
+        questions["stuck"] = Noul(
+            instructions="Does `step.builder_report` describe the same failure as `step.previous_report`, "
+            "or say the builder is stuck, blocked, or going in circles?"
+        )
+    return questions
+
+
+def decide_gate(stakes: float, flags: dict[str, float]) -> dict:
+    fired = sorted(name for name, p in flags.items() if p >= FLAG_AT)
+    send = "oracle" if fired or stakes >= STAKES_AT else "self"
+    why = (
+        f"risk flags: {', '.join(fired)}" if fired
+        else f"stakes {stakes:.2f} >= {STAKES_AT}" if stakes >= STAKES_AT
+        else f"routine: stakes {stakes:.2f}, no risk flags"
+    )
+    return {"send_to": send, "why": why, "stakes": round(stakes, 2), "flags": {k: round(v, 2) for k, v in flags.items()}}
+
+
+def cmd_gate(args) -> dict:
+    step = {"brief": read(args.brief)}
+    if args.files:
+        step["changed_files"] = args.files.split()
+    if args.report:
+        step["builder_report"] = read(args.report, 4_000)
+        step["previous_report"] = read(args.previous_report, 4_000) or "none"
+    response = ask({"step": step}, gate_questions(bool(args.report)))
+    flags = {name: response.nouls[name].noul for name in response.nouls}
+    result = {"command": "gate", "phase": args.phase} | decide_gate(response.scores["stakes"].score, flags)
+    if result["send_to"] == "self" and random.random() < AUDIT_RATE:
+        result |= {"send_to": "oracle", "audit": True, "why": f"spot check (would be self: {result['why']})"}
+    first_line = step["brief"].strip().splitlines()[0] if step["brief"].strip() else ""
+    return result | {"title": first_line[:120], "brief": step["brief"][:6_000]}
+
+
+# ---------- fresh ----------
+
+
+def session_of(pane: str) -> dict:
+    """Pane -> Claude pid -> ~/.claude/sessions/<pid>.json -> transcript."""
+    info = json.loads(subprocess.run(
+        ["herdr", "pane", "process-info", "--pane", pane], capture_output=True, text=True, check=True
+    ).stdout)
+    procs = info["result"]["process_info"]["foreground_processes"]
+    pid = next(p["pid"] for p in procs if p["argv"] and Path(p["argv"][0]).name == "claude")
+    session = json.loads((Path.home() / f".claude/sessions/{pid}.json").read_text())
+    transcript = next(Path.home().glob(f".claude/projects/*/{session['sessionId']}.jsonl"))
+    return {"pid": pid, "session_id": session["sessionId"], "transcript": transcript}
+
+
+def context_and_history(transcript: Path, prompts: int = 4) -> tuple[int, list[str]]:
+    """Current context size (last assistant turn's input) and the last few prompts the session received."""
+    tokens, history = 0, []
+    for line in transcript.open():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            continue
+        if entry.get("type") == "assistant" and (usage := message.get("usage")):
+            tokens = sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+        elif entry.get("type") == "user" and isinstance(message.get("content"), str):
+            history.append(message["content"][:600])
+    return tokens, history[-prompts:]
+
+
+def pane_tail(pane: str, lines: int = 60) -> str:
+    out = subprocess.run(
+        ["herdr", "agent", "read", pane, "--source", "recent-unwrapped", "--lines", str(lines)],
+        capture_output=True, text=True,
+    )
+    return out.stdout[-6_000:]
+
+
+def decide_fresh(role: str, tokens: int, related: float | None, struggling: float) -> dict:
+    limits = CONTEXT[role]
+    if tokens >= limits["hard"]:
+        fresh, why = True, f"context {tokens:,} >= {limits['hard']:,}"
+    elif struggling >= STRUGGLING_AT:
+        fresh, why = True, f"recent output looks stuck ({struggling:.2f})"
+    elif role == "builder" and related is not None and related < RELATED_AT:
+        fresh, why = True, f"next step unrelated to its recent work ({related:.2f})"
+    elif related is not None and related < RELATED_AT and tokens >= limits["soft"]:
+        fresh, why = True, f"next step unrelated ({related:.2f}) and context {tokens:,} >= {limits['soft']:,}"
+    else:
+        fresh, why = False, f"keep: context {tokens:,}, related {related if related is None else round(related, 2)}"
+    return {"fresh": fresh, "why": why, "tokens": tokens, "related": related, "struggling": round(struggling, 2)}
+
+
+def cmd_fresh(args) -> dict:
+    from typesafe_sdk import Noul
+
+    session = session_of(args.pane)
+    tokens, history = context_and_history(session["transcript"])
+    state = {"recent_prompts": history, "recent_output": pane_tail(args.pane)}
+    questions = {"struggling": Noul(
+        instructions="Does `recent_output` show the agent repeating a failed fix, going in circles, "
+        "contradicting its instructions, or losing track of the task?"
+    )}
+    if args.next:
+        state["next_step"] = read(args.next, 6_000)
+        questions["related"] = Noul(
+            instructions="Is `next_step` about the same feature and the same files as the work in `recent_prompts`?"
+        )
+    response = ask(state, questions)
+    related = response.nouls["related"].noul if args.next else None
+    return {"command": "fresh", "role": args.role, "pane": args.pane, "session": session["session_id"]} | decide_fresh(
+        args.role, tokens, related, response.nouls["struggling"].noul
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    gate = sub.add_parser("gate")
+    gate.add_argument("--issue", required=True)
+    gate.add_argument("--phase", choices=["plan", "diff"], required=True)
+    gate.add_argument("--brief", required=True)
+    gate.add_argument("--report")
+    gate.add_argument("--previous-report")
+    gate.add_argument("--files")
+    fresh = sub.add_parser("fresh")
+    fresh.add_argument("--issue", required=True)
+    fresh.add_argument("--role", choices=list(CONTEXT), required=True)
+    fresh.add_argument("--pane", required=True)
+    fresh.add_argument("--next")
+    args = parser.parse_args()
+
+    start = time.perf_counter()
+    result = {"id": uuid.uuid4().hex[:8], "issue": args.issue}
+    result |= cmd_gate(args) if args.command == "gate" else cmd_fresh(args)
+    result["ms"] = round((time.perf_counter() - start) * 1000)
+    crewlog.append("decision", **result)
+    result.pop("brief", None)
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    main()
