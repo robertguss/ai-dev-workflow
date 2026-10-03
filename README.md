@@ -1,22 +1,21 @@
 # ai-dev-workflow
 
-Agent skills for building software with three coding agents working as a team: a
-**driver** that leads, an **oracle** that reviews, and a **worker** that builds.
-Every change goes through a reviewed plan and a reviewed diff before it is
-committed, and the work queue lives in [Linear](https://linear.app), where you
-decide what gets built.
+Agent skills for building software with a crew of three Claude Code sessions: an
+Opus **driver** that leads, a Sonnet **builder** that builds, and a Fable
+**oracle** that reviews the steps that matter. Every change goes through a
+reviewed plan and a reviewed diff before it is committed, and the work queue
+lives in [Linear](https://linear.app), where you decide what gets built.
 
-The agents run side by side in one [Herdr](https://herdr.dev) tab (Herdr is a
-terminal multiplexer for coding agents) and talk to each other through it. Any
-agent that can load skills can play any role; the author runs Claude Code as
-driver, Codex as oracle, and Grok or Claude Code as workers.
+The sessions run side by side in one [Herdr](https://herdr.dev) tab (Herdr is a
+terminal multiplexer for coding agents) and talk to each other through it. Fable
+is the costliest model in the loop, so [Jev](https://typesafe.ai), a fast
+classifier model, decides which steps it reviews and when each session should
+restart fresh.
 
-| Skill                                                  | What it does                                                                     |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| [`driver`](skills/driver/SKILL.md)                     | Leads the loop: pulls issues, writes briefs, runs reviews, commits, hands off.   |
-| [`oracle`](skills/oracle/SKILL.md)                     | Read-only reviewer of briefs, diffs and handoffs, with severity-ranked findings. |
-| [`worker`](skills/worker/SKILL.md)                     | Builds one step from a brief, test-first, leaves it uncommitted, reports back.   |
-| [`linear-migration`](skills/linear-migration/SKILL.md) | Moves a repository's existing plan (ROADMAP, PLAN, HANDOFF, audit) into Linear.  |
+| Skill                                                  | What it does                                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| [`crew`](skills/crew/SKILL.md)                         | The whole loop: lays out the three panes, plans, builds, reviews, commits, hands off. |
+| [`linear-migration`](skills/linear-migration/SKILL.md) | Moves a repository's existing plan (ROADMAP, PLAN, HANDOFF, audit) into Linear.       |
 
 ## How it works
 
@@ -24,26 +23,50 @@ driver, Codex as oracle, and Grok or Claude Code as workers.
 
 ```text
 ┌────────────────────────┬────────────────────────┐
-│                        │ oracle                 │
-│ driver                 │ reviews briefs, diffs  │
-│ picks work, plans,     │ and handoffs; never    │
-│ briefs, triages,       │ edits the repository   │
-│ commits; the only      ├────────────────────────┤
-│ agent that writes to   │ worker                 │
-│ Linear                 │ builds one step from   │
-│                        │ the brief, test-first  │
+│                        │ oracle (Fable)         │
+│ driver (Opus)          │ reviews high-stakes    │
+│ picks work, plans,     │ briefs and diffs;      │
+│ briefs, reviews the    │ never edits            │
+│ routine steps,         ├────────────────────────┤
+│ commits; the only      │ builder (Sonnet)       │
+│ agent that writes to   │ builds one step from   │
+│ Linear                 │ the brief, test-first  │
 └────────────────────────┴────────────────────────┘
 ```
 
-- **Driver** (left pane): the tech lead. It takes the next released issue,
+- **Driver** (left half, Opus): the tech lead. It takes the next released issue,
   splits multi-step issues into sub-issues, writes each step's **brief**,
-  triages the oracle's findings, and commits. It writes no code itself.
-- **Oracle** (right pane): an independent reviewer. It reads the repository and
-  runs checks that leave it unchanged (tests, linters, builds), and replies with
-  a verdict and findings ranked P1 to P3. P1 and P2 block a commit; P3 does not.
-- **Worker** (below the oracle): builds exactly one step. The driver starts a
-  fresh worker for each step, keeps it through that step's fix rounds, and
-  closes it after the commit.
+  reviews the routine steps itself, triages findings, and commits. It writes no
+  code itself.
+- **Oracle** (top right, Fable): an independent reviewer for the steps Jev flags
+  as high-stakes. It reads the repository and runs checks that leave it
+  unchanged, and replies with a verdict and findings ranked P1 to P3. P1 and P2
+  block a commit; P3 does not.
+- **Builder** (bottom right, Sonnet): builds one step at a time, test-first, and
+  leaves its changes uncommitted.
+
+The layout is fixed: `/crew` builds it, and restarts happen in place.
+
+### Where Jev comes in
+
+Two cheap decisions, made in well under a second each:
+
+- **Who reviews?** Before each plan review and each diff review, Jev scores the
+  brief for security, data loss, concurrency, money, contract and architecture
+  risk, plus how bad a subtle mistake would be. A high score, or a builder stuck
+  on the same failure twice, sends the step to the oracle; everything else the
+  driver reviews against the oracle's own checklist. An `oracle` label on an
+  issue, or your request, always sends it to the oracle. About one routine step
+  in ten goes to the oracle anyway as a spot check.
+- **Fresh session?** At each step boundary, Jev weighs each session's context
+  size, whether its recent output looks stuck, and whether the next step is
+  related to its recent work, and restarts the builder, oracle or driver when a
+  fresh one would do better.
+
+Every decision is logged next to what followed (review findings, cost per role,
+overrides, your feedback, bugs found later), so the cutoffs can be tuned from
+evidence. `crewlog.py report` summarizes it; `crewlog.py replay` re-runs past
+decisions with other cutoffs.
 
 ### One step, end to end
 
@@ -52,43 +75,30 @@ A **step** is one reviewed commit.
 ```mermaid
 flowchart TD
     A[Pull the next Ready issue] --> B[Driver writes the brief]
-    B --> C{Oracle: plan review}
-    C -- P1/P2 findings --> B
-    C -- sign-off --> D[Fresh worker builds it test-first]
+    B --> J1{Jev: who reviews the plan?}
+    J1 -- high-stakes --> C{Oracle: plan review}
+    J1 -- routine --> C2{Driver: plan review}
+    C -- P1/P2 --> B
+    C2 -- P1/P2 --> B
+    C -- sign-off --> D[Builder builds it test-first]
+    C2 -- sign-off --> D
     D --> E[Driver checks the report and reruns the verify commands]
-    E --> F{Oracle: diff review}
-    F -- P1/P2 findings --> G[Driver triages; worker fixes]
+    E --> J2{Jev: who reviews the diff?}
+    J2 -- high-stakes or stuck --> F{Oracle: diff review}
+    J2 -- routine --> F2{Driver: diff review}
+    F -- P1/P2 --> G[Driver triages; builder fixes]
+    F2 -- P1/P2 --> G
     G --> E
-    F -- sign-off --> P[Worker applies any P3s; driver checks them]
-    P --> H[Commit, comment on the issue, Done]
+    F -- sign-off --> H[Commit, comment on the issue, Done]
+    F2 -- sign-off --> H
     H --> A
 ```
 
-1. **Pull.** At each step boundary the driver re-reads the Linear queue and
-   takes the highest-priority `Ready` issue that nothing blocks.
-2. **Plan.** It writes the brief (below), sets `Planning`, and sends it to the
-   oracle for a `plan` review. If the issue needs several steps, the first brief
-   proposes the split, and the driver creates one sub-issue per step.
-3. **Build.** Once no P1/P2 plan finding is open, it starts a worker, sends the
-   approved brief, sets `Building`, and posts the brief on the issue.
-4. **Check.** The worker writes the failing tests first, then the change, runs
-   the verify commands, and replies with a fixed report. The driver compares the
-   report with the brief, reads the diff, and reruns the checks itself.
-5. **Diff review.** `In Review`: the oracle reviews the uncommitted changes. The
-   driver sends each finding it agrees with to the worker verbatim. A finding it
-   disputes goes to you, not back to the oracle. The driver checks each fix as
-   in step 4, then asks for a `re-review`, until sign-off.
-6. **Commit.** Sign-off means no P1 or P2 finding is open. The worker applies
-   any remaining P3s and the driver checks them, without another review round.
-   Then the driver commits with the issue identifier, posts a
-   completion comment (commit, verdict, review rounds, each finding's
-   disposition, verify results), sets `Done`, and closes the worker.
-
 ### The brief
 
-One text with three uses: the oracle approves it, the worker builds from it, and
-the Linear issue records it. It is written so that a fresh agent holding only
-the repository could build the step:
+One text with four uses: Jev gates it, the reviewer approves it, the builder
+builds from it, and the Linear issue records it. It names the real risk in plain
+words, because Jev reads only what the brief says:
 
 ```text
 Brief: <ISSUE-ID> <title>
@@ -100,156 +110,126 @@ Tests first: each test to write and the behavior it pins; each fails before the 
 Constraints: project rules binding this step; existing patterns to follow (file:line).
 Out of scope: what this step leaves alone.
 Verify: commands to run and their expected results.
-Stop and report if: conditions where the worker asks instead of choosing.
+Stop and report if: conditions where the builder asks instead of choosing.
 ```
 
 ### Chunks and handoffs
 
-A **chunk** is one driver session. After about five steps (sooner after heavy
-ones), when the queue is empty, or when you ask, the driver ends the chunk at a
-step boundary:
-
-1. It writes `HANDOFF.md` for a fresh driver and oracle: state, queue snapshot,
-   sources of truth, decisions in force, operational state, gotchas.
-2. The oracle reviews the handoff, and the driver commits it.
-3. It restarts the oracle fresh in the same pane, starts a new driver below
-   itself, confirms the new driver is `READY`, and hands over. The new driver
-   closes the old pane and carries on.
-
-Long sessions degrade; fresh agents with a reviewed handoff do better.
+A **chunk** is one driver session. When Jev says a fresh driver is due, the
+queue is empty, or you ask, the driver ends the chunk at a step boundary: it
+writes `HANDOFF.md`, has it reviewed and commits it, restarts the oracle and
+builder fresh, starts a new driver, and hands over once the new one is `READY`.
 
 ## Linear as the queue
 
 One Linear project per repository. You own priority, order, scope and what is
 released; the driver owns every status after `Ready`.
 
-| Status        | Meaning                                  | Set by                                              |
-| ------------- | ---------------------------------------- | --------------------------------------------------- |
-| `Backlog`     | Ideas and discovered work; not buildable | you; the driver for work it discovers               |
+| Status        | Meaning                                  | Set by                                                                                    |
+| ------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `Backlog`     | Ideas and discovered work; not buildable | you; the driver for work it discovers                                                     |
 | `Ready`       | Released for building                    | you; the driver for sub-issues of a released parent and for answered `Needs Input` issues |
-| `Planning`    | Brief in plan review                     | driver                                              |
-| `Building`    | Worker building or fixing                | driver                                              |
-| `In Review`   | Diff in oracle review                    | driver                                              |
-| `Needs Input` | Waiting on you                           | driver                                              |
-| `Done`        | Committed                                | driver                                              |
+| `Planning`    | Brief in plan review                     | driver                                                                                    |
+| `Building`    | Builder building or fixing               | driver                                                                                    |
+| `In Review`   | Diff in review                           | driver                                                                                    |
+| `Needs Input` | Waiting on you                           | driver                                                                                    |
+| `Done`        | Committed                                | driver                                                                                    |
 
 - **The Ready gate.** Agents build only what you moved to `Ready`. Work the
   driver discovers mid-step goes to `Backlog` with a note, for you to release.
-  Releasing a parent issue releases its sub-issues.
-- **Reprioritize any time.** The driver re-reads the queue only at step
-  boundaries, so a change takes effect at the next step.
 - **Questions.** When only you can decide, the driver comments on the issue
   (question, options, recommendation, what it blocks) and sets `Needs Input`.
-  During planning it parks the issue and moves on; during building or review it
-  waits. Answer with a comment on the issue, or in the driver's pane.
 - **`[driver]` prefix.** Linear shows the driver's comments under your account,
   so every comment it posts starts with `[driver]`. An unprefixed comment is
-  yours: that is how it spots your answer.
-
-Without a Linear project the loop still works: the queue is your instructions
-plus `HANDOFF.md`'s remaining work.
+  yours.
 
 ## Setup
 
 ### Requirements
 
-- [Herdr](https://herdr.dev), with the agents running inside it (`HERDR_ENV=1`).
-- Two or three coding agents that load skills (`SKILL.md` folders), for example
-  Claude Code, Codex or Grok.
-- `git`, and Python 3 for `linear-migration`'s script template. For the Linear queue: a Linear workspace, and the Linear MCP server
-  configured for the agent that drives. `linear-migration` also uses a Linear
-  API key, through GraphQL.
+- [Herdr](https://herdr.dev), with Claude Code running inside it
+  (`HERDR_ENV=1`), and access to Opus, Sonnet and Fable.
+- A [TypeSafe](https://typesafe.ai) API key for Jev, in `TYPESAFE_API_KEY` or in
+  [fnox](https://github.com/jdx/fnox) (project config, or
+  `~/.config/fnox/config.toml`).
+- [`uv`](https://docs.astral.sh/uv/) (it runs `jev.py` and installs its one
+  dependency), Python 3, and `git`.
+- For the Linear queue: a Linear workspace, and the Linear MCP server or a
+  Linear API key for the driver.
 
 ### Install the skills
-
-Clone the repository and link each skill folder into the skills directory of
-every agent you use. For Claude Code that is `~/.claude/skills/`:
 
 ```bash
 git clone https://github.com/robertguss/ai-dev-workflow.git ~/ai-dev-workflow
 mkdir -p ~/.claude/skills
-for s in driver oracle worker linear-migration; do
+for s in crew linear-migration; do
   ln -s ~/ai-dev-workflow/skills/$s ~/.claude/skills/$s
 done
 ```
 
-If a skill of the same name is already installed there, look at it before
-replacing it. Do the same for each other agent's skills directory. The author keeps one shared
-folder, `~/.agents/skills/`, links it from each agent, and links the skills
-there.
-
 ### Set up Linear
 
-In your team's workflow settings, make these statuses exist with these exact
-names: `Backlog`, `Ready` (Unstarted), `Planning`, `Building`, `In Review`,
-`Needs Input` (all Started), `Done`. The driver checks for them at startup and
-stops, naming any that are missing.
+Make these statuses exist with these exact names: `Backlog`, `Ready`
+(Unstarted), `Planning`, `Building`, `In Review`, `Needs Input` (all Started),
+`Done`. The driver checks for them and names any that are missing.
 
 ### Opt a repository in
 
-Add a `## Driver` section to the repository's root `AGENTS.md`:
+Add a `## Crew` section to the repository's root `CLAUDE.md`:
 
 ```text
-## Driver
+## Crew
 
 Linear: team <KEY>, project <name>
-Worker: <agent kind> -- <agent args>
 ```
 
-`Worker:` names the agent kind Herdr starts for each step, and any arguments (a
-model, a permission mode). Leave out `Linear:` to run from `HANDOFF.md` alone;
-leave out `Worker:` and the driver asks you once.
+Leave out `Linear:` to run from `HANDOFF.md` alone.
 
 ## Day to day
 
-1. Open a Herdr tab in the repository. Start the driver agent in the left pane
-   and the oracle agent in a pane to its right.
-2. In the driver's pane: `Use the driver skill.` (or `/driver` in Claude Code).
-   It finds the oracle, reads `AGENTS.md` and `HANDOFF.md`, and checks the
-   checkout.
+1. Open a Herdr tab in the repository and start Claude Code with
+   `claude --model opus --effort high`.
+2. Run `/crew`. It builds the layout, starting the oracle and builder with your
+   permission mode, reads `CLAUDE.md` and `HANDOFF.md`, and checks the checkout.
 3. Write issues in Linear and move the ones you want built to `Ready`. The
-   driver works through them, reporting each verdict and status change in a line
-   or two.
-4. Answer `Needs Input` questions in Linear or in the pane. Outward actions
-   (push, deploy, anything beyond the repository) stay yours to approve, per
-   your project's rules in `AGENTS.md`.
+   driver works through them, reporting each review decision and status change
+   in a line.
+4. Answer `Needs Input` questions in Linear or in the driver's pane. Outward
+   actions (push, merge, deploy) stay yours to authorize, per the project's own
+   rules.
+5. Ask the driver how the crew is doing to get `crewlog.py report`.
 
 ## Moving an existing plan into Linear
 
 If a repository already tracks its work in a ROADMAP, PLAN, HANDOFF or audit
-document, ask an agent to use the `linear-migration` skill on it. It:
-
-1. waits until the repository's driver and oracle are idle;
-2. inventories every open task, question, binding rule and chat-only answer,
-   each with a source location;
-3. asks you only what only you can decide (how far to move; whether to wait for
-   work in flight);
-4. writes a script that creates the project, quoting each source verbatim with a
-   link to the exact lines, dry-runs it, runs it, and verifies every issue
-   against Linear;
-5. has an oracle review the result to sign-off;
-6. ends with a **switch-over issue** that the repository's own driver builds
-   through the normal loop: the `AGENTS.md` section, the old plan frozen as
-   history, and every pointer to it reconciled.
+document, ask an agent to use the `linear-migration` skill on it. It inventories
+every open task, question and binding rule with its source, asks you only what
+only you can decide, creates the project with each source quoted verbatim, has
+an oracle review the result, and ends with a **switch-over issue** that the
+repository's own driver builds through the normal loop.
 
 Before the first use, copy
 [`local.example.md`](skills/linear-migration/local.example.md) to `local.md`
-beside it and fill in your workspace's facts (team, status ids, where your API
-key lives). Keep `local.md` out of version control; this repository's
-`.gitignore` already does. [`template.py`](skills/linear-migration/template.py)
-is a starting point for the migration script.
+beside it and fill in your workspace's facts. Keep `local.md` out of version
+control; this repository's `.gitignore` already does.
 
 ## Files
 
 ```text
 skills/
-  driver/
-    SKILL.md          the loop, the brief, review requests, when a chunk ends
+  crew/
+    SKILL.md          the layout, and which file each role follows
+    driver.md         the loop, the brief, review requests, logging
+    builder.md        build, stop-and-ask, fix rounds, report format
+    oracle.md         review phases, severity, reply format
+    jev.md            the gate and fresh-session decisions, spot checks, tuning
     linear.md         statuses, queue order, splitting, comments, escalation
-    herdr-ops.md      prompting agents, starting and closing workers
-    end-of-chunk.md   HANDOFF.md, its review, restarting the oracle and driver
-  oracle/SKILL.md     review phases, severity, reply format
-  worker/SKILL.md     build, stop-and-ask, fix rounds, report format
+    herdr-ops.md      the layout, prompting and reading panes
+    end-of-chunk.md   HANDOFF.md, its review, restarting the crew
+    scripts/
+      panes.py        builds, checks and restarts the three-pane layout
+      jev.py          Jev's review gate and fresh-session check
+      crewlog.py      the evaluation log, report and threshold replay
   linear-migration/
     SKILL.md          the migration procedure and the pitfalls already hit
     local.example.md  template for your workspace facts (local.md)
@@ -258,9 +238,9 @@ skills/
 
 ## Status
 
-This is a young workflow: the driver and oracle date from September 2026, the
-worker and the Linear queue from October 2026. Expect the skills to change as it
-is tuned. Issues and pull requests are welcome.
+A young workflow. The crew replaced the earlier driver, oracle and worker skills
+in October 2026, and Jev's cutoffs are first guesses waiting on the log. Expect
+the skills to change as it is tuned. Issues and pull requests are welcome.
 
 ## License
 

@@ -6,7 +6,7 @@ out of version control. The skill reads it before anything else.
 ## Linear
 
 - Team: **<team name>**, key `<KEY>`, id `<team uuid>`.
-- Status ids (the driver's statuses; see the driver skill's `linear.md`):
+- Status ids (the crew's statuses; see the crew skill's `linear.md`):
   Backlog `<id>`, Ready `<id>`, Planning `<id>`, Building `<id>`, In Review
   `<id>`, Needs Input `<id>`, Done `<id>`.
 - API key: read it from
