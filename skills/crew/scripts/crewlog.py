@@ -68,7 +68,7 @@ def records(days: int | None = None, repo_path: str | None = None) -> list[dict]
 
 
 def usage_since(transcript: Path, since: datetime) -> dict:
-    total = Counter()
+    total, seen = Counter(), set()
     for line in transcript.open():
         try:
             entry = json.loads(line)
@@ -77,6 +77,11 @@ def usage_since(transcript: Path, since: datetime) -> dict:
         message = entry.get("message")
         if entry.get("type") != "assistant" or not isinstance(message, dict) or not message.get("usage"):
             continue
+        # Claude Code writes one line per content block, each repeating its message's usage: count each message once.
+        if message_id := message.get("id"):
+            if message_id in seen:
+                continue
+            seen.add(message_id)
         stamp = entry.get("timestamp")
         if stamp and datetime.fromisoformat(stamp.replace("Z", "+00:00")) < since:
             continue
@@ -118,7 +123,7 @@ def cmd_usage(args) -> dict:
         u = usage_since(transcript, since)
         per_role[role] = u | {"usd": cost(role, u)}
     return append("usage", issue=args.issue, since=starts[-1]["at"], roles=per_role,
-                  usd=round(sum(r["usd"] for r in per_role.values()), 4))
+                  usd=round(sum(r["usd"] for r in per_role.values()), 4), counted="per-message")
 
 
 # ---------- report ----------
@@ -172,14 +177,18 @@ def cmd_report(args) -> None:
         print(f"    {n:>3}  {reason}")
 
     print("\n== Cost (estimated) ==")
-    usage = [r for r in rs if r["kind"] == "usage"]
+    # Usage records from before `counted` existed added each message's tokens once per content block.
+    usage = [r for r in rs if r["kind"] == "usage" and r.get("counted") == "per-message"]
+    overcounted = sum(1 for r in rs if r["kind"] == "usage" and r.get("counted") != "per-message")
     per_role = Counter()
     for u in usage:
         for role, v in u.get("roles", {}).items():
             per_role[role] += v["usd"]
     oracle_reviews = sum(1 for r in reviews if r.get("reviewer") == "oracle")
     print(f"  {len(usage)} steps measured: " + ", ".join(f"{role} ${usd:.2f}" for role, usd in per_role.most_common()))
-    if oracle_reviews:
+    if overcounted:
+        print(f"  ({overcounted} earlier steps left out: their tokens were counted 2-3x over)")
+    if oracle_reviews and per_role["oracle"]:
         print(f"  oracle reviews: {oracle_reviews}, about ${per_role['oracle'] / oracle_reviews:.2f} each")
 
     print("\n== Overrides and feedback ==")

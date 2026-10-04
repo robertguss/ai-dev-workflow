@@ -22,9 +22,11 @@ import subprocess
 import sys
 import time
 
+# Tools the oracle and builder never use. Denying them keeps their definitions out of every call's context.
+UNUSED_TOOLS = ["--disallowedTools", "Artifact,Workflow,ScheduleWakeup,SendFeedback,ReportFindings"]
 ROLE_ARGS = {
-    "oracle": ["--model", "fable", "--effort", "high"],
-    "builder": ["--model", "sonnet", "--effort", "medium"],
+    "oracle": ["--model", "fable", "--effort", "high", *UNUSED_TOOLS],
+    "builder": ["--model", "sonnet", "--effort", "medium", *UNUSED_TOOLS],
 }
 # Dropped from the driver's own launch command before reuse: they pick a model or resume old work.
 DROP_WITH_VALUE = {"--model", "--effort", "--resume", "-r", "--session-id", "--agent", "--advisor"}

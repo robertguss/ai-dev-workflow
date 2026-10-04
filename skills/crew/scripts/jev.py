@@ -43,7 +43,7 @@ AUDIT_RATE = float(os.environ.get("CREW_AUDIT_RATE", "0.1"))
 CONTEXT = {
     "builder": {"soft": 60_000, "hard": 150_000},
     "oracle": {"soft": 60_000, "hard": 120_000},
-    "driver": {"soft": 250_000, "hard": 400_000},
+    "driver": {"soft": 150_000, "hard": 250_000},
 }
 STRUGGLING_AT = 0.7
 RELATED_AT = 0.5

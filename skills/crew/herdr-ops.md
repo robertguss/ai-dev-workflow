@@ -10,7 +10,7 @@ pane ID.
 - `panes.py check`: `layout_ok`, or the problems. Run it after anything odd.
 - `panes.py restart oracle|builder`: stops the pane's Claude session and starts
   a fresh one in the same pane, with your own launch arguments (permission mode)
-  plus the role's model and effort (`ROLE_ARGS` in `panes.py`).
+  plus the role's model, effort and denied tools (`ROLE_ARGS` in `panes.py`).
 
 ## Sending a prompt
 
