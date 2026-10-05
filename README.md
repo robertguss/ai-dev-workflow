@@ -250,7 +250,8 @@ Make these statuses exist with these exact names: `Backlog`, `Ready`
 
 ### Opt a repository in
 
-Add a `## Crew` section to the repository's root `CLAUDE.md` or `AGENTS.md`:
+Add a `## Crew` section to the repository's root `CLAUDE.md` (or `AGENTS.md`,
+for a Codex-only project; agents read both when both exist):
 
 ```text
 ## Crew

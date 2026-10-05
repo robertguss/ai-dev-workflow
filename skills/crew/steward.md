@@ -18,8 +18,8 @@ and reading panes are in [herdr-ops.md](herdr-ops.md).
 
 1. Check `test "${HERDR_ENV:-}" = 1`. If it fails, tell the user you are not
    inside Herdr and stop.
-2. Read the `## Crew` section of the project's instructions (`CLAUDE.md` or
-   `AGENTS.md`):
+2. Read the `## Crew` section of the project's instructions (`CLAUDE.md` and
+   `AGENTS.md`, whichever exist):
    ```text
    ## Crew
 

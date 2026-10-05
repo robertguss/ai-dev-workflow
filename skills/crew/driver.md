@@ -46,11 +46,11 @@ log. When you or the user overrule one, tell the user why in a line and log it
    interrupted: when an issue with your crew's label is in `Building` or
    `In Review`, resume it at loop step 6 from the brief on the issue; otherwise
    ask the user before touching it.
-3. Read the `## Crew` section of the project's instructions (`CLAUDE.md` or
-   `AGENTS.md`; its fields are in [steward.md](steward.md#setup)). Your land
-   branch is in your prompt. No `Linear:` line: the queue is the user's
-   instructions plus `HANDOFF.md`'s remaining work, and every Linear and steward
-   action below is skipped.
+3. Read the `## Crew` section of the project's instructions (`CLAUDE.md` and
+   `AGENTS.md`, whichever exist; its fields are in
+   [steward.md](steward.md#setup)). Your land branch is in your prompt. No
+   `Linear:` line: the queue is the user's instructions plus `HANDOFF.md`'s
+   remaining work, and every Linear and steward action below is skipped.
 4. Read the **handoff** if it exists: `.crew/handoff.md` in your worktree with
    Linear, `HANDOFF.md` at the repository root without. Re-check what it
    observed: `git status`, `git log -1`, and the remote.

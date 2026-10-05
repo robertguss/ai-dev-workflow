@@ -27,8 +27,8 @@ repository and the handoff (`.crew/handoff.md` in a crew's worktree, else
 
 ## Review
 
-Read the project's instructions (`CLAUDE.md` or `AGENTS.md`) and the step's spec
-before judging. Then, by phase:
+Read the project's instructions (`CLAUDE.md` and `AGENTS.md`, whichever exist)
+and the step's spec before judging. Then, by phase:
 
 - **`plan`:** review the step's brief. Check each claim against the actual code.
   Name missed callers and consumers, assumptions the code contradicts,

@@ -1,9 +1,9 @@
 # Linear
 
-The project's instructions (`CLAUDE.md` or `AGENTS.md`) name the Linear team and
-project; reach them through the Linear MCP tools. The steward and the drivers
-write to Linear; the oracle and builder work from the repository and their
-prompts.
+The project's instructions (`CLAUDE.md` and `AGENTS.md`, whichever exist) name
+the Linear team and project; reach them through the Linear MCP tools. The
+steward and the drivers write to Linear; the oracle and builder work from the
+repository and their prompts.
 
 ## Ownership
 
