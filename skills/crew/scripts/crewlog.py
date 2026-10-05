@@ -2,13 +2,15 @@
 """The crew's evaluation log: Jev's decisions next to what actually happened.
 
 Every record is one JSON line in ~/.local/state/crew/log.jsonl, tagged with the
-repository and issue. jev.py writes `decision` records, verify.py writes `verify`
-records; the driver writes the rest:
+repository and issue. jev.py writes `decision` records, verify.py `verify`
+records and panes.py a `session` record for each session it restarts; the driver
+writes the rest:
 
   crewlog.py step     --issue ID                      a step starts (usage is measured from here)
   crewlog.py review   --issue ID --phase P --reviewer oracle|driver --verdict sign-off|changes
                       --p1 N --p2 N --p3 N [--decision DID] [--round N]
-  crewlog.py usage    --issue ID                      tokens and estimated cost per role since `step`
+  crewlog.py usage    --issue ID                      tokens and estimated cost per role since `step`,
+                                                      across sessions restarted mid-step
   crewlog.py override --issue ID --decision DID --by driver|user --to oracle|self|keep|fresh --why TEXT
   crewlog.py escape   --issue ID --commit SHA --why TEXT    a bug later traced to a crew commit
   crewlog.py mismatch --issue ID --why TEXT           verify.py disagreed with the builder's report
@@ -106,24 +108,26 @@ def cmd_usage(args) -> dict:
     sys.path.insert(0, str(Path(__file__).parent))
     import panes  # noqa: E402
 
-    starts = [r for r in records(repo_path=repo()) if r["kind"] == "step" and r.get("issue") == args.issue]
+    rs = records(repo_path=repo())
+    starts = [r for r in rs if r["kind"] == "step" and r.get("issue") == args.issue]
     if not starts:
         sys.exit(json.dumps({"error": f"no `step` record for {args.issue}"}))
     since = datetime.fromisoformat(starts[-1]["at"])
+    ended = [r for r in rs if r["kind"] == "session" and datetime.fromisoformat(r["at"]) >= since]
     live = panes.agents_in_tab()
     roles = {role: live.get(name) for role, name in panes.names().items()}
     roles["driver"] = roles["driver"] or os.environ.get("HERDR_PANE_ID")
     per_role = {}
     for role, pane in roles.items():
-        if not pane:
-            continue
-        proc = panes.claude_proc(pane)
-        if not proc:
-            continue
-        session = json.loads((Path.home() / f".claude/sessions/{proc['pid']}.json").read_text())
-        transcript = next(Path.home().glob(f".claude/projects/*/{session['sessionId']}.jsonl"))
-        u = usage_since(transcript, since)
-        per_role[role] = u | {"usd": cost(role, u)}
+        transcripts = {Path(r["transcript"]) for r in ended if r.get("role") == role}
+        if pane and (current := panes.session(pane)) and current["transcript"]:
+            transcripts.add(current["transcript"])
+        u = Counter()
+        for transcript in transcripts:
+            if transcript.exists():
+                u.update(usage_since(transcript, since))
+        if u:
+            per_role[role] = dict(u) | {"usd": cost(role, u), "sessions": len(transcripts)}
     return append("usage", issue=args.issue, since=starts[-1]["at"], roles=per_role,
                   usd=round(sum(r["usd"] for r in per_role.values()), 4), counted="per-message")
 

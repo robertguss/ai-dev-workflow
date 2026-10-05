@@ -21,6 +21,10 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import crewlog  # noqa: E402
 
 # Tools the oracle and builder never use. Denying them keeps their definitions out of every call's context.
 UNUSED_TOOLS = ["--disallowedTools", "Artifact,Workflow,ScheduleWakeup,SendFeedback,ReportFindings"]
@@ -55,6 +59,16 @@ def names() -> dict[str, str]:
 def claude_proc(pane: str) -> dict | None:
     procs = herdr("pane", "process-info", "--pane", pane)["result"]["process_info"]["foreground_processes"]
     return next((p for p in procs if p["argv"] and os.path.basename(p["argv"][0]) == "claude"), None)
+
+
+def session(pane: str) -> dict | None:
+    """The pane's Claude session: pid, session ID and transcript (None until its first message)."""
+    proc = claude_proc(pane)
+    if not proc:
+        return None
+    session_id = json.loads((Path.home() / f".claude/sessions/{proc['pid']}.json").read_text())["sessionId"]
+    transcript = next(Path.home().glob(f".claude/projects/*/{session_id}.jsonl"), None)
+    return {"pid": proc["pid"], "session_id": session_id, "transcript": transcript}
 
 
 def launch_args(role: str) -> list[str]:
@@ -134,6 +148,7 @@ def restart(role: str) -> dict:
     pane = agents_in_tab().get(names()[role])
     if not pane:
         sys.exit(json.dumps({"error": f"no live {role} agent; run setup"}))
+    ended = session(pane)
     # Claude Code exits on /exit; a lone ctrl+c only arms "press again to exit".
     herdr("pane", "send-text", pane, "/exit")
     herdr("pane", "send-keys", pane, "enter")
@@ -148,6 +163,9 @@ def restart(role: str) -> dict:
             break
     else:
         sys.exit(json.dumps({"error": f"{role} pane {pane} did not return to the shell"}))
+    if ended and ended["transcript"]:
+        # `crewlog.py usage` adds up sessions ended mid-step from these records.
+        crewlog.append("session", role=role, pane=pane, session_id=ended["session_id"], transcript=str(ended["transcript"]))
     start(role, pane)
     return {"restarted": role, "pane": pane} | check()
 

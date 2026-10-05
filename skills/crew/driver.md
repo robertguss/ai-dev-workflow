@@ -66,7 +66,12 @@ Prompting, waiting and reading panes are in [herdr-ops.md](herdr-ops.md).
 2. **Plan.** Run `crewlog.py step --issue <ID>`. Write the step's brief (below)
    to a file. When the issue needs several steps, the first brief also proposes
    the split: one line per step, in build order. Status `Planning`.
-3. **Plan review.** Run `jev.py gate --issue <ID> --phase plan --brief <file>`.
+3. **Fresh check.** Run
+   `jev.py fresh --issue <ID> --role builder --pane <builder> --next <brief>`,
+   then the same with `--role oracle`. Each `fresh: true` gets
+   `panes.py restart <role>`. Restarting before plan review lets the oracle
+   carry its plan findings into the diff review.
+4. **Plan review.** Run `jev.py gate --issue <ID> --phase plan --brief <file>`.
    - `oracle`: send it for a `plan` review.
    - `self`: review the brief yourself against oracle.md's `plan` checklist,
      checking it against the actual code.
@@ -74,10 +79,6 @@ Prompting, waiting and reading panes are in [herdr-ops.md](herdr-ops.md).
    Triage and re-review as in steps 8–9. Done when no P1/P2 plan finding is
    open; then create any sub-issues.
 
-4. **Fresh check.** Run
-   `jev.py fresh --issue <ID> --role builder --pane <builder> --next <brief>`,
-   then the same with `--role oracle`. Each `fresh: true` gets
-   `panes.py restart <role>`.
 5. **Build.** Status `Building`; post the brief on the issue. Send the builder
    `Use the crew skill. Your role: builder.` followed by the approved brief.
    Wait for its report.
@@ -85,8 +86,8 @@ Prompting, waiting and reading panes are in [herdr-ops.md](herdr-ops.md).
    runs tests and builds, being the cheapest model; your one run is step 11's
    verify. Its report must give each verify command's result with counts; when
    one is missing, vague or doubtful, have the builder rerun it and report the
-   output. Send gaps back to the builder. Done when the reported suite is green and
-   every acceptance line has its change and its test.
+   output. Send gaps back to the builder. Done when the reported suite is green
+   and every acceptance line has its change and its test.
 7. **Diff review.** Status `In Review`. Write the builder's report to a file and
    run
    `jev.py gate --issue <ID> --phase diff --brief <file> --report <report> --files "<changed paths>"`,
@@ -109,9 +110,9 @@ Prompting, waiting and reading panes are in [herdr-ops.md](herdr-ops.md).
    reports; its `stuck` flag sends the step to the oracle.
 10. **Sign-off** is a review with no P1/P2 findings. Send any remaining P3s to
     the builder and check its fix, without another review round.
-11. **Verify.** Run `verify.py --issue <ID> -- "<command>" ...` with the
-    brief's verify commands. It prints each exit code and the last output lines,
-    which is all you read, and writes the full output to a log for the builder.
+11. **Verify.** Run `verify.py --issue <ID> -- "<command>" ...` with the brief's
+    verify commands. It prints each exit code and the last output lines, which
+    is all you read, and writes the full output to a log for the builder.
     Compare the printed lines with the builder's latest report. A failure, or
     counts that disagree: log
     `crewlog.py mismatch --issue <ID> --why "<what disagreed>"`, send the

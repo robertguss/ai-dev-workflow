@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import crewlog  # noqa: E402
+import panes  # noqa: E402
 
 MODEL = "jev-1.13.0"
 FNOX_GLOBAL = Path.home() / ".config/fnox/config.toml"
@@ -137,18 +138,6 @@ def cmd_gate(args) -> dict:
 # ---------- fresh ----------
 
 
-def session_of(pane: str) -> dict:
-    """Pane -> Claude pid -> ~/.claude/sessions/<pid>.json -> transcript."""
-    info = json.loads(subprocess.run(
-        ["herdr", "pane", "process-info", "--pane", pane], capture_output=True, text=True, check=True
-    ).stdout)
-    procs = info["result"]["process_info"]["foreground_processes"]
-    pid = next(p["pid"] for p in procs if p["argv"] and Path(p["argv"][0]).name == "claude")
-    session = json.loads((Path.home() / f".claude/sessions/{pid}.json").read_text())
-    transcript = next(Path.home().glob(f".claude/projects/*/{session['sessionId']}.jsonl"))
-    return {"pid": pid, "session_id": session["sessionId"], "transcript": transcript}
-
-
 def context_and_history(transcript: Path, prompts: int = 4) -> tuple[int, list[str]]:
     """Current context size (last assistant turn's input) and the last few prompts the session received."""
     tokens, history = 0, []
@@ -193,8 +182,10 @@ def decide_fresh(role: str, tokens: int, related: float | None, struggling: floa
 def cmd_fresh(args) -> dict:
     from typesafe_sdk import Noul
 
-    session = session_of(args.pane)
-    tokens, history = context_and_history(session["transcript"])
+    session = panes.session(args.pane)
+    if not session:
+        sys.exit(json.dumps({"error": f"no Claude session in pane {args.pane}"}))
+    tokens, history = context_and_history(session["transcript"]) if session["transcript"] else (0, [])
     state = {"recent_prompts": history, "recent_output": pane_tail(args.pane)}
     questions = {"struggling": Noul(
         instructions="Does `recent_output` show the agent repeating a failed fix, going in circles, "
