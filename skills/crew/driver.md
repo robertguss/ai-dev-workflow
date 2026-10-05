@@ -21,6 +21,7 @@ In this skill's `scripts/` directory; each prints JSON.
 - `panes.py` keeps the layout: [herdr-ops.md](herdr-ops.md).
 - `jev.py gate` picks the reviewer, `jev.py fresh` picks when a pane restarts:
   [jev.md](jev.md).
+- `verify.py` reruns the verify commands once before commit: loop step 11.
 - `crewlog.py` records what followed each decision: [Logging](#logging).
 
 Each Jev verdict carries an `id`. Act on the verdict and keep the `id` for the
@@ -80,11 +81,11 @@ Prompting, waiting and reading panes are in [herdr-ops.md](herdr-ops.md).
 5. **Build.** Status `Building`; post the brief on the issue. Send the builder
    `Use the crew skill. Your role: builder.` followed by the approved brief.
    Wait for its report.
-6. **Check.** Compare the report with the brief and read the diff. Do not run
-   tests or builds yourself: the builder runs them, being the cheapest model.
-   Its report must give each verify command's result with counts; when one is
-   missing, vague or doubtful, have the builder rerun it and report the output.
-   Send gaps back to the builder. Done when the reported suite is green and
+6. **Check.** Compare the report with the brief and read the diff. The builder
+   runs tests and builds, being the cheapest model; your one run is step 11's
+   verify. Its report must give each verify command's result with counts; when
+   one is missing, vague or doubtful, have the builder rerun it and report the
+   output. Send gaps back to the builder. Done when the reported suite is green and
    every acceptance line has its change and its test.
 7. **Diff review.** Status `In Review`. Write the builder's report to a file and
    run
@@ -108,7 +109,16 @@ Prompting, waiting and reading panes are in [herdr-ops.md](herdr-ops.md).
    reports; its `stuck` flag sends the step to the oracle.
 10. **Sign-off** is a review with no P1/P2 findings. Send any remaining P3s to
     the builder and check its fix, without another review round.
-11. **Commit** (and push, if the project's conventions say so), with the issue
+11. **Verify.** Run `verify.py --issue <ID> -- "<command>" ...` with the
+    brief's verify commands. It prints each exit code and the last output lines,
+    which is all you read, and writes the full output to a log for the builder.
+    Compare the printed lines with the builder's latest report. A failure, or
+    counts that disagree: log
+    `crewlog.py mismatch --issue <ID> --why "<what disagreed>"`, send the
+    builder the log's path, and return to step 6. A suite that outlasts your
+    tool's timeout runs in the background. Done when every command exits 0 with
+    the counts the report gave.
+12. **Commit** (and push, if the project's conventions say so), with the issue
     identifier in the message. Post the completion comment, naming who reviewed
     and Jev's reason, and set `Done`. Run `crewlog.py usage --issue <ID>`.
 
@@ -133,7 +143,7 @@ Files: expected changes and new files.
 Tests first: each test to write and the behavior it pins; each fails before the change.
 Constraints: project rules binding this step; existing patterns to follow (file:line).
 Out of scope: what this step leaves alone.
-Verify: commands to run and their expected results.
+Verify: commands to run from the repository root, each runnable as written, and their expected results.
 Stop and report if: conditions where the builder asks instead of choosing.
 ```
 
@@ -164,8 +174,8 @@ preferring a boundary between issues to one inside a split issue. Then follow
 ## Logging
 
 `crewlog.py` appends to `~/.local/state/crew/log.jsonl`; `jev.py` logs its own
-decisions, and the loop above logs steps, reviews and usage. Log these too, the
-moment they happen:
+decisions, `verify.py` its runs, and the loop above logs steps, reviews,
+mismatches and usage. Log these too, the moment they happen:
 
 - **An overrule**, yours or the user's:
   `crewlog.py override --issue <ID> --decision <id> --by driver|user --to oracle|self|keep|fresh --why "<reason>"`.

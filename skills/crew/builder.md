@@ -50,6 +50,8 @@ Deviations: departures from the brief and why, or "none"
 Questions: or "none"
 ```
 
-Keep what you ran separate from what you only assume. Keep the report under
-about 60 lines; if it must be longer, write it to a file and end with that
+Keep what you ran separate from what you only assume. Give counts exactly as
+the runner printed them, from a run after your last edit: the driver reruns the
+verify commands before commit and sends back any report they contradict. Keep
+the report under about 60 lines; if it must be longer, write it to a file and end with that
 file's path.

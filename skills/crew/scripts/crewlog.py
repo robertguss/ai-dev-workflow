@@ -2,7 +2,8 @@
 """The crew's evaluation log: Jev's decisions next to what actually happened.
 
 Every record is one JSON line in ~/.local/state/crew/log.jsonl, tagged with the
-repository and issue. jev.py writes `decision` records; the driver writes the rest:
+repository and issue. jev.py writes `decision` records, verify.py writes `verify`
+records; the driver writes the rest:
 
   crewlog.py step     --issue ID                      a step starts (usage is measured from here)
   crewlog.py review   --issue ID --phase P --reviewer oracle|driver --verdict sign-off|changes
@@ -10,6 +11,7 @@ repository and issue. jev.py writes `decision` records; the driver writes the re
   crewlog.py usage    --issue ID                      tokens and estimated cost per role since `step`
   crewlog.py override --issue ID --decision DID --by driver|user --to oracle|self|keep|fresh --why TEXT
   crewlog.py escape   --issue ID --commit SHA --why TEXT    a bug later traced to a crew commit
+  crewlog.py mismatch --issue ID --why TEXT           verify.py disagreed with the builder's report
   crewlog.py feedback --issue ID --text TEXT          the user's own verdict on a decision or step
   crewlog.py report   [--days N] [--repo PATH]        how well the gate and fresh checks are doing
   crewlog.py replay   [--flag-at F] [--stakes-at S]   re-run past gate decisions with other thresholds
@@ -176,6 +178,14 @@ def cmd_report(args) -> None:
     for reason, n in Counter(f["why"].split(" (")[0].split(":")[0] for f in freshes if f["fresh"]).most_common():
         print(f"    {n:>3}  {reason}")
 
+    print("\n== Builder reports ==")
+    verifies = [r for r in rs if r["kind"] == "verify"]
+    mismatches = [r for r in rs if r["kind"] == "mismatch"]
+    print(f"  {len(verifies)} pre-commit verify runs, {sum(1 for v in verifies if not v.get('ok'))} failed; "
+          f"{len(mismatches)} reports contradicted by them")
+    for m in mismatches[-10:]:
+        print(f"    {m['at'][:16]} {m.get('issue', '')} {m.get('why', '')}")
+
     print("\n== Cost (estimated) ==")
     # Usage records from before `counted` existed added each message's tokens once per content block.
     usage = [r for r in rs if r["kind"] == "usage" and r.get("counted") == "per-message"]
@@ -237,6 +247,9 @@ def main() -> None:
     p.add_argument("--decision")
     p = sub.add_parser("escape")
     for flag in ("--issue", "--commit", "--why"):
+        p.add_argument(flag, required=True)
+    p = sub.add_parser("mismatch")
+    for flag in ("--issue", "--why"):
         p.add_argument(flag, required=True)
     p = sub.add_parser("feedback"); p.add_argument("--issue"); p.add_argument("--text", required=True)
     for name in ("report", "replay"):
