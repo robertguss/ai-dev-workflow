@@ -80,9 +80,12 @@ Prompting, waiting and reading panes are in [herdr-ops.md](herdr-ops.md).
 5. **Build.** Status `Building`; post the brief on the issue. Send the builder
    `Use the crew skill. Your role: builder.` followed by the approved brief.
    Wait for its report.
-6. **Check.** Compare the report with the brief, read the diff, and rerun the
-   brief's verify commands yourself. Send gaps back to the builder. Done when
-   the suite is green and every acceptance line has its change and its test.
+6. **Check.** Compare the report with the brief and read the diff. Do not run
+   tests or builds yourself: the builder runs them, being the cheapest model.
+   Its report must give each verify command's result with counts; when one is
+   missing, vague or doubtful, have the builder rerun it and report the output.
+   Send gaps back to the builder. Done when the reported suite is green and
+   every acceptance line has its change and its test.
 7. **Diff review.** Status `In Review`. Write the builder's report to a file and
    run
    `jev.py gate --issue <ID> --phase diff --brief <file> --report <report> --files "<changed paths>"`,
@@ -146,8 +149,8 @@ contains:
 - The step's spec: the Linear issue's text and comments, and the project rules
   that bind it. In a fresh session, point the oracle at `HANDOFF.md`.
 - Why it is reviewing: Jev's `why` line, or the user's request.
-- For `diff`: the builder's report, your check results, and anything you want
-  scrutinized.
+- For `diff`: the builder's report with its test results, your check results,
+  and anything you want scrutinized. The oracle never runs tests.
 - For `re-review`: each earlier finding and the change that addresses it.
 
 ## End of chunk

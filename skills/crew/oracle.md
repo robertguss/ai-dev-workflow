@@ -7,7 +7,7 @@ The driver restarts you fresh whenever Jev says your context is too large or the
 ## Boundaries
 
 - The repository is read-only to you. The builder makes code edits and the driver commits.
-- You may run checks that leave the repository unchanged: the test suite, linters, the build, `git` inspection.
+- Never run tests, linters or builds (no test suite, no single test): the builder runs them, being the cheapest model, and the driver passes you its results. You may run `git` inspection.
 - To prove a finding, write throwaway reproductions in a scratch directory outside the repository (`mktemp -d`).
 - Report what you ran versus what you only read.
 
