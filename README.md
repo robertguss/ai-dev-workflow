@@ -39,11 +39,13 @@ restart fresh.
   reviews the routine steps itself, triages findings, and commits. It writes no
   code itself.
 - **Oracle** (top right, Fable): an independent reviewer for the steps Jev flags
-  as high-stakes. It reads the repository and runs checks that leave it
-  unchanged, and replies with a verdict and findings ranked P1 to P3. P1 and P2
-  block a commit; P3 does not.
+  as high-stakes. It reads the repository, proves findings with throwaway
+  reproductions outside it, and replies with a verdict and findings ranked P1 to
+  P3. P1 and P2 block a commit; P3 does not.
 - **Builder** (bottom right, Sonnet): builds one step at a time, test-first, and
-  leaves its changes uncommitted.
+  leaves its changes uncommitted. Being the cheapest model, it runs the tests;
+  before each commit the driver reruns the brief's verify commands once, reading
+  only exit codes and summary lines, to check the builder's report.
 
 The layout is fixed: `/crew` builds it, and restarts happen in place.
 
@@ -58,7 +60,7 @@ Two cheap decisions, made in well under a second each:
   driver reviews against the oracle's own checklist. An `oracle` label on an
   issue, or your request, always sends it to the oracle. About one routine step
   in ten goes to the oracle anyway as a spot check.
-- **Fresh session?** At each step boundary, Jev weighs each session's context
+- **Fresh session?** At the start of each step, before plan review, Jev weighs each session's context
   size, whether its recent output looks stuck, and whether the next step is
   related to its recent work, and restarts the builder, oracle or driver when a
   fresh one would do better.
@@ -75,22 +77,25 @@ A **step** is one reviewed commit.
 ```mermaid
 flowchart TD
     A[Pull the next Ready issue] --> B[Driver writes the brief]
-    B --> J1{Jev: who reviews the plan?}
+    B --> R[Jev: restart the builder or oracle fresh?]
+    R --> J1{Jev: who reviews the plan?}
     J1 -- high-stakes --> C{Oracle: plan review}
     J1 -- routine --> C2{Driver: plan review}
     C -- P1/P2 --> B
     C2 -- P1/P2 --> B
     C -- sign-off --> D[Builder builds it test-first]
     C2 -- sign-off --> D
-    D --> E[Driver checks the report and reruns the verify commands]
+    D --> E[Driver checks the builder's report against the diff]
     E --> J2{Jev: who reviews the diff?}
     J2 -- high-stakes or stuck --> F{Oracle: diff review}
     J2 -- routine --> F2{Driver: diff review}
     F -- P1/P2 --> G[Driver triages; builder fixes]
     F2 -- P1/P2 --> G
     G --> E
-    F -- sign-off --> H[Commit, comment on the issue, Done]
-    F2 -- sign-off --> H
+    F -- sign-off --> V[Driver reruns the verify commands]
+    F2 -- sign-off --> V
+    V -- fails or contradicts the report --> G
+    V -- green, matches the report --> H[Commit, comment on the issue, Done]
     H --> A
 ```
 
@@ -109,7 +114,7 @@ Files: expected changes and new files.
 Tests first: each test to write and the behavior it pins; each fails before the change.
 Constraints: project rules binding this step; existing patterns to follow (file:line).
 Out of scope: what this step leaves alone.
-Verify: commands to run and their expected results.
+Verify: commands to run from the repository root, each runnable as written, and their expected results.
 Stop and report if: conditions where the builder asks instead of choosing.
 ```
 
@@ -229,6 +234,7 @@ skills/
     scripts/
       panes.py        builds, checks and restarts the three-pane layout
       jev.py          Jev's review gate and fresh-session check
+      verify.py       reruns the verify commands before commit, printing only exit codes and tails
       crewlog.py      the evaluation log, report and threshold replay
   linear-migration/
     SKILL.md          the migration procedure and the pitfalls already hit
