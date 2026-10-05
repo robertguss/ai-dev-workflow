@@ -8,7 +8,7 @@
   jev.py gate  --issue ID --phase plan|diff --brief FILE [--report FILE] [--previous-report FILE] [--files "a b"]
       Does this step need the (costly) Fable oracle, or can the driver review it itself?
   jev.py fresh --issue ID --role builder|oracle|driver|steward --pane PANE [--next FILE]
-      Should this pane's Claude session be restarted fresh before the next step?
+      Should this pane's agent session be restarted fresh before the next step?
   jev.py ready --issue ID --text FILE
       Steward: release this shaped issue to Ready, rewrite it, or ask the user?
   jev.py escalate --issue ID --text FILE --question FILE
@@ -35,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import crewlog  # noqa: E402
 import panes  # noqa: E402
+import runtimes  # noqa: E402
 
 MODEL = "jev-1.13.0"
 FNOX_GLOBAL = Path.home() / ".config/fnox/config.toml"
@@ -62,6 +63,8 @@ CONTEXT = {
 }
 # Below this a session has barely been used: restarting it gains nothing, so Jev is not asked.
 FRESH_FLOOR = 20_000
+# The hard limit never exceeds this share of the model's context window, when the runtime reports it.
+WINDOW_SHARE = 0.8
 STRUGGLING_AT = 0.7
 RELATED_AT = 0.5
 
@@ -227,24 +230,6 @@ def cmd_duplicate(args) -> dict:
 # ---------- fresh ----------
 
 
-def context_and_history(transcript: Path, prompts: int = 4) -> tuple[int, list[str]]:
-    """Current context size (last assistant turn's input) and the last few prompts the session received."""
-    tokens, history = 0, []
-    for line in transcript.open():
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        message = entry.get("message")
-        if not isinstance(message, dict):
-            continue
-        if entry.get("type") == "assistant" and (usage := message.get("usage")):
-            tokens = sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-        elif entry.get("type") == "user" and isinstance(message.get("content"), str):
-            history.append(message["content"][:600])
-    return tokens, history[-prompts:]
-
-
 def pane_tail(pane: str, lines: int = 60) -> str:
     out = subprocess.run(
         ["herdr", "agent", "read", pane, "--source", "recent-unwrapped", "--lines", str(lines)],
@@ -253,10 +238,12 @@ def pane_tail(pane: str, lines: int = 60) -> str:
     return out.stdout[-6_000:]
 
 
-def decide_fresh(role: str, tokens: int, related: float | None, struggling: float) -> dict:
+def decide_fresh(role: str, tokens: int, related: float | None, struggling: float, window: int | None = None) -> dict:
     limits = CONTEXT[role]
-    if tokens >= limits["hard"]:
-        fresh, why = True, f"context {tokens:,} >= {limits['hard']:,}"
+    # A model with a smaller window (Codex's is 258k) restarts before it compacts.
+    hard = min(limits["hard"], int(window * WINDOW_SHARE)) if window else limits["hard"]
+    if tokens >= hard:
+        fresh, why = True, f"context {tokens:,} >= {hard:,}"
     elif struggling >= STRUGGLING_AT:
         fresh, why = True, f"recent output looks stuck ({struggling:.2f})"
     elif role == "builder" and related is not None and related < RELATED_AT:
@@ -273,8 +260,9 @@ def cmd_fresh(args) -> dict:
 
     session = panes.session(args.pane)
     if not session:
-        sys.exit(json.dumps({"error": f"no Claude session in pane {args.pane}"}))
-    tokens, history = context_and_history(session["transcript"]) if session["transcript"] else (0, [])
+        sys.exit(json.dumps({"error": f"no agent session in pane {args.pane}"}))
+    runtime = runtimes.RUNTIMES[session["runtime"]]
+    tokens, history, window = runtime.context(session["transcript"]) if session["transcript"] else (0, [], None)
     if tokens < FRESH_FLOOR:
         return {"command": "fresh", "role": args.role, "pane": args.pane, "session": session["session_id"],
                 "fresh": False, "why": f"keep: barely used ({tokens:,} tokens)", "tokens": tokens}
@@ -292,9 +280,8 @@ def cmd_fresh(args) -> dict:
         )
     response = ask(state, questions)
     related = response.nouls["related"].noul if asks_related else None
-    return {"command": "fresh", "role": args.role, "pane": args.pane, "session": session["session_id"]} | decide_fresh(
-        args.role, tokens, related, response.nouls["struggling"].noul
-    )
+    return {"command": "fresh", "role": args.role, "pane": args.pane, "session": session["session_id"],
+            "runtime": session["runtime"]} | decide_fresh(args.role, tokens, related, response.nouls["struggling"].noul, window)
 
 
 def main() -> None:

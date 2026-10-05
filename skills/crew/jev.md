@@ -31,15 +31,17 @@ pass, or send it to the oracle yourself.
 jev.py fresh --issue <ID> --role builder|oracle|driver|steward --pane <pane> [--next <next-brief-file>]
 ```
 
-It reads the pane's Claude transcript for its context size and recent prompts,
-and the pane's recent output. Returns `fresh: true|false` with `why`: a session
-restarts when its context passes its role's hard limit, or when its recent
-output looks stuck (repeating a failed fix, contradicting its instructions). A
-builder or oracle also restarts when the next step is unrelated to its recent
-work and it already carries a fair amount of context; the driver and steward
-carry the whole project, so only their hard limit and the stuck check apply. A
-session that has barely been used (under `FRESH_FLOOR` tokens) is kept without
-asking Jev.
+It reads the pane's session file (Claude Code's or Codex's) for its context
+size, window and recent prompts, and the pane's recent output. Returns
+`fresh: true|false` with `why`: a session restarts when its context passes its
+role's hard limit, or when its recent output looks stuck (repeating a failed
+fix, contradicting its instructions). A builder or oracle also restarts when the
+next step is unrelated to its recent work and it already carries a fair amount
+of context; the driver and steward carry the whole project, so only their hard
+limit and the stuck check apply. A session that has barely been used (under
+`FRESH_FLOOR` tokens) is kept without asking Jev. A hard limit never exceeds
+`WINDOW_SHARE` of the model's context window when the runtime reports one
+(Codex's is 258k), so a session restarts before it compacts.
 
 Run it at step boundaries, and mid-step only for a builder that has failed the
 same way twice: reviewers keep their findings until the step commits.

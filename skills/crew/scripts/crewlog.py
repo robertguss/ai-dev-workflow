@@ -38,8 +38,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LOG = Path(os.environ.get("CREW_LOG", Path.home() / ".local/state/crew/log.jsonl"))
-# Estimated $ per million tokens: (input, output, cache read). Cache writes are priced at 1.25x input.
-PRICES = {"driver": (4.0, 20.0, 0.20), "builder": (2.0, 10.0, 0.20), "oracle": (10.0, 50.0, 0.25)}
 
 
 def repo() -> str:
@@ -82,44 +80,12 @@ def records(days: int | None = None, repo_path: str | None = None) -> list[dict]
 # ---------- usage ----------
 
 
-def usage_since(transcript: Path, since: datetime) -> dict:
-    total, seen = Counter(), set()
-    for line in transcript.open():
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        message = entry.get("message")
-        if entry.get("type") != "assistant" or not isinstance(message, dict) or not message.get("usage"):
-            continue
-        # Claude Code writes one line per content block, each repeating its message's usage: count each message once.
-        if message_id := message.get("id"):
-            if message_id in seen:
-                continue
-            seen.add(message_id)
-        stamp = entry.get("timestamp")
-        if stamp and datetime.fromisoformat(stamp.replace("Z", "+00:00")) < since:
-            continue
-        for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-            total[key] += message["usage"].get(key) or 0
-    return dict(total)
-
-
-def cost(role: str, u: dict) -> float:
-    inp, out, cache_read = PRICES[role]
-    return round((
-        u.get("input_tokens", 0) * inp
-        + u.get("cache_creation_input_tokens", 0) * inp * 1.25
-        + u.get("cache_read_input_tokens", 0) * cache_read
-        + u.get("output_tokens", 0) * out
-    ) / 1e6, 4)
-
-
 def measure(since: datetime) -> dict:
     """Tokens and estimated cost per role in this crew's panes since `since`, counting
     sessions restarted meanwhile (panes.py logs each, and restarts happen in place)."""
     sys.path.insert(0, str(Path(__file__).parent))
     import panes  # noqa: E402
+    import runtimes  # noqa: E402
 
     ended = [r for r in records(repo_path=repo()) if r["kind"] == "session" and datetime.fromisoformat(r["at"]) >= since]
     live = panes.agents_in_tab()
@@ -129,15 +95,24 @@ def measure(since: datetime) -> dict:
     for role, pane in roles.items():
         if not pane:
             continue
-        transcripts = {Path(r["transcript"]) for r in ended if r.get("role") == role and r.get("pane") == pane}
+        _, model, _ = runtimes.for_role(role, repo())
+        # (session file, runtime, model): sessions restarted meanwhile carry their own; older records were Claude's.
+        sessions = {(Path(r["transcript"]), r.get("runtime", "claude"), r.get("model", model))
+                    for r in ended if r.get("role") == role and r.get("pane") == pane}
         if (current := panes.session(pane)) and current["transcript"]:
-            transcripts.add(current["transcript"])
-        u = Counter()
-        for transcript in transcripts:
+            sessions.add((current["transcript"], current["runtime"], model))
+        u, usd, unpriced = Counter(), 0.0, set()
+        for transcript, runtime, session_model in sessions:
             if transcript.exists():
-                u.update(usage_since(transcript, since))
+                part = runtimes.RUNTIMES[runtime].usage_since(transcript, since)
+                u.update(part)
+                if (c := runtimes.cost(session_model, part)) is None:
+                    unpriced.add(session_model)
+                else:
+                    usd += c
         if u:
-            per_role[role] = dict(u) | {"usd": cost(role, u), "sessions": len(transcripts)}
+            per_role[role] = dict(u) | {"usd": round(usd, 4), "sessions": len(sessions), "model": model,
+                                        "unpriced": sorted(unpriced) or None}
     return per_role
 
 
@@ -232,7 +207,8 @@ def cmd_report(args) -> None:
     start_tokens = {d["issue"]: d["tokens"] for d in freshes if d["role"] == "driver"}
     buckets: dict[str, list[float]] = {}
     for u in rs:
-        if u["kind"] == "usage" and u.get("counted") == "per-message" and u["issue"] in start_tokens and "driver" in u.get("roles", {}):
+        if (u["kind"] == "usage" and u.get("counted") == "per-message" and u["issue"] in start_tokens
+                and "driver" in u.get("roles", {}) and not u["roles"]["driver"].get("unpriced")):
             t = start_tokens[u["issue"]]
             bucket = "under 100k" if t < 100_000 else "100k-200k" if t < 200_000 else "200k and over"
             buckets.setdefault(bucket, []).append(u["roles"]["driver"]["usd"])
@@ -253,13 +229,21 @@ def cmd_report(args) -> None:
     usage = [r for r in rs if r["kind"] == "usage" and r.get("counted") == "per-message"]
     overcounted = sum(1 for r in rs if r["kind"] == "usage" and r.get("counted") != "per-message")
     per_role = Counter()
+    unpriced_tokens = Counter()
     for u in usage:
         for role, v in u.get("roles", {}).items():
             per_role[role] += v["usd"]
+            if v.get("unpriced"):
+                unpriced_tokens[role] += sum(v.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens"))
     oracle_reviews = sum(1 for r in reviews if r.get("reviewer") == "oracle")
-    print(f"  {len(usage)} steps measured: " + ", ".join(f"{role} ${usd:.2f}" for role, usd in per_role.most_common()))
+    priced = [(role, usd) for role, usd in per_role.most_common() if usd or role not in unpriced_tokens]
+    print(f"  {len(usage)} steps measured: " + (", ".join(f"{role} ${usd:.2f}" for role, usd in priced) or "no priced models"))
     if overcounted:
         print(f"  ({overcounted} earlier steps left out: their tokens were counted 2-3x over)")
+    if unpriced_tokens:
+        print("  unpriced (subscription models, tokens only): "
+              + ", ".join(f"{role} {n / 1e6:.1f}M tokens" if n >= 1e6 else f"{role} {n / 1e3:.0f}k tokens"
+                          for role, n in unpriced_tokens.most_common()))
     if oracle_reviews and per_role["oracle"]:
         print(f"  oracle reviews: {oracle_reviews}, about ${per_role['oracle'] / oracle_reviews:.2f} each")
 

@@ -18,7 +18,8 @@ and reading panes are in [herdr-ops.md](herdr-ops.md).
 
 1. Check `test "${HERDR_ENV:-}" = 1`. If it fails, tell the user you are not
    inside Herdr and stop.
-2. Read the `## Crew` section of the project's `CLAUDE.md`:
+2. Read the `## Crew` section of the project's instructions (`CLAUDE.md` or
+   `AGENTS.md`):
    ```text
    ## Crew
 
@@ -26,11 +27,15 @@ and reading panes are in [herdr-ops.md](herdr-ops.md).
    Land: crew -> main        (or: main)
    Crews: 2
    Shared: <globs>           (optional)
+   Runtime: codex            (optional: claude | codex, per role: oracle=claude)
+   Models: builder=gpt-6-luna:low   (optional per-role model[:effort])
    ```
    `Land` defaults to `crew -> main`, `Crews` to 2. The **land branch** is
    `crew` for `crew -> main` and `main` for `main`. `Shared` adds to the
-   built-in shared spine in `scripts/parallel.py`. A field your prompt gives (a
-   migration starts you before `CLAUDE.md` has a `Linear:` line) wins.
+   built-in shared spine in `scripts/parallel.py`. `Runtime` defaults to
+   `claude`; the scripts read it and `Models` themselves, and the defaults per
+   runtime are in `scripts/runtimes.py`. A field your prompt gives (a migration
+   starts you before the instructions have a `Linear:` line) wins.
 3. Name yourself: `herdr agent rename "$HERDR_PANE_ID" steward-<tab>`, your tab
    ID lowercased with `:` turned to `-`. Drivers reach you by that name.
 4. Check the Linear statuses (linear.md); name any missing ones to the user and
@@ -38,9 +43,14 @@ and reading panes are in [herdr-ops.md](herdr-ops.md).
 5. For `crew -> main`: make sure `origin/crew` exists (else push `origin/main`
    to it: `git push origin origin/main:refs/heads/crew`).
 6. Keep passes coming while you are otherwise idle, since the user answers and
-   adds work in Linear without telling you: in Claude Code, run
-   `/loop 10m Run a steward pass if anything changed in Linear or the crews.`
-   Without a loop, tell the user to message you after changing Linear.
+   adds work in Linear without telling you. When `crews.py list` shows
+   `ticker: false`, start one in a pane below yourself:
+   ```bash
+   herdr pane split --current --direction down --cwd "$PWD" --no-focus
+   herdr pane run <new-pane> "<this skill's scripts>/crews.py tick"
+   ```
+   It prompts you `Tick: ...` every ten minutes while you are idle, and stops
+   once you are gone.
 
 Done when you hold the configuration, the land branch exists and passes are
 scheduled. Then run a pass.
@@ -164,12 +174,13 @@ uncommitted or unlanded; tell the user what it reports then. Then run a pass.
 Everything you know lives in Linear and the repository, so a replacement needs
 no handoff.
 
-1. `panes.py args steward` gives the new session's arguments.
+1. `panes.py args steward` gives the new session's Herdr agent `kind` and
+   `args`.
 2. Split below yourself, free your name, and start the replacement:
    ```bash
    herdr pane split --current --direction down --cwd "$PWD" --no-focus
    herdr agent rename "$HERDR_PANE_ID" --clear
-   herdr agent start steward-<tab> --kind claude --pane <new-pane> -- <args>
+   herdr agent start steward-<tab> --kind <kind> --pane <new-pane> -- <args>
    ```
 3. As your last action, send it, without `--wait`:
    `Use the crew skill. Your role: steward. You replace the steward in pane <your pane ID>: close that pane with herdr pane close, then run setup and a pass.`

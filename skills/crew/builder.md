@@ -11,7 +11,7 @@ report; the driver owns commits and the issue tracker.
 Your session may carry over from an earlier step. Each brief is a new contract:
 earlier steps are committed, and only this brief's scope is yours.
 
-1. Read the project's instructions (`CLAUDE.md`), then check that
+1. Read the project's instructions (`CLAUDE.md` or `AGENTS.md`), then check that
    `git rev-parse --short HEAD` and a clean `git status` match the brief's base.
    On a mismatch, report `blocked` before changing anything.
 2. Write the brief's "Tests first" tests and run them. Each must fail, for the

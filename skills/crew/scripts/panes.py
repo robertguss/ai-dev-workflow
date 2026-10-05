@@ -2,15 +2,17 @@
 """Keep the crew layout in the driver's Herdr tab, always:
 
     +-----------------+-----------------+
-    |                 |  oracle (Fable) |
-    |  driver (Opus)  +-----------------+
-    |                 | builder (Sonnet)|
+    |                 |     oracle      |
+    |     driver      +-----------------+
+    |                 |     builder     |
     +-----------------+-----------------+
 
   panes.py setup              create the oracle and builder panes if missing; print pane IDs
   panes.py check              verify the layout; exit 1 and list problems if it is wrong
-  panes.py restart ROLE       fresh Claude session for oracle|builder in the same pane
-  panes.py args ROLE          the claude arguments for a new driver|steward|oracle|builder session
+  panes.py restart ROLE       fresh session for oracle|builder in the same pane
+  panes.py args ROLE          the Herdr agent kind and arguments for a new driver|steward|oracle|builder session
+
+Each role runs on the runtime the project's `## Crew` section picks (runtimes.py).
 
 Run from the driver's pane (it reads $HERDR_PANE_ID and $HERDR_TAB_ID). Prints JSON.
 """
@@ -26,18 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import crewlog  # noqa: E402
-
-# Tools the oracle and builder never use. Denying them keeps their definitions out of every call's context.
-UNUSED_TOOLS = ["--disallowedTools", "Artifact,Workflow,ScheduleWakeup,SendFeedback,ReportFindings"]
-ROLE_ARGS = {
-    "oracle": ["--model", "fable", "--effort", "high", *UNUSED_TOOLS],
-    "builder": ["--model", "sonnet", "--effort", "medium", *UNUSED_TOOLS],
-    "driver": ["--model", "opus", "--effort", "high"],
-    "steward": ["--model", "opus", "--effort", "high"],
-}
-# Dropped from the driver's own launch command before reuse: they pick a model or resume old work.
-DROP_WITH_VALUE = {"--model", "--effort", "--resume", "-r", "--session-id", "--agent", "--advisor"}
-DROP_FLAGS = {"--continue", "-c", "--fork-session"}
+import runtimes  # noqa: E402
 
 
 def herdr(*args: str) -> dict:
@@ -59,36 +50,28 @@ def names() -> dict[str, str]:
     return {role: f"{role}-{tab}" for role in ("driver", "oracle", "builder")}
 
 
-def claude_proc(pane: str) -> dict | None:
+def agent_proc(pane: str) -> dict | None:
+    """The pane's foreground agent process (any runtime), with its runtime."""
     procs = herdr("pane", "process-info", "--pane", pane)["result"]["process_info"]["foreground_processes"]
-    return next((p for p in procs if p["argv"] and os.path.basename(p["argv"][0]) == "claude"), None)
+    proc = next((p for p in procs if p["argv"] and runtimes.by_process(p["argv"][0])), None)
+    return proc and proc | {"runtime": runtimes.by_process(proc["argv"][0])}
 
 
 def session(pane: str) -> dict | None:
-    """The pane's Claude session: pid, session ID and transcript (None until its first message)."""
-    proc = claude_proc(pane)
+    """The pane's agent session: pid, runtime, session ID and session file (None until its first prompt)."""
+    proc = agent_proc(pane)
     if not proc:
         return None
-    session_id = json.loads((Path.home() / f".claude/sessions/{proc['pid']}.json").read_text())["sessionId"]
-    transcript = next(Path.home().glob(f".claude/projects/*/{session_id}.jsonl"), None)
-    return {"pid": proc["pid"], "session_id": session_id, "transcript": transcript}
+    return {"pid": proc["pid"], "runtime": proc["runtime"].name} | proc["runtime"].session(proc["pid"])
 
 
-def launch_args(role: str) -> list[str]:
-    """The caller's own claude arguments (permission mode etc.) with the role's model and effort."""
-    proc = claude_proc(env("HERDR_PANE_ID"))
-    kept, skip = [], False
-    for arg in (proc["argv"][1:] if proc else []):
-        if skip:
-            skip = False
-            continue
-        if arg in DROP_WITH_VALUE:
-            skip = True
-        elif arg.split("=", 1)[0] in DROP_WITH_VALUE or arg in DROP_FLAGS or not arg.startswith("-"):
-            continue
-        else:
-            kept.append(arg)
-    return kept + ROLE_ARGS[role]
+def launch(role: str) -> tuple[str, list[str]]:
+    """The Herdr agent kind and arguments for a new session of `role`: the role's runtime, model and effort,
+    plus the caller's own settings (permission mode, sandbox) when the caller runs the same runtime."""
+    runtime, model, effort = runtimes.for_role(role, crewlog.repo())
+    proc = agent_proc(env("HERDR_PANE_ID"))
+    own = runtimes.reusable_args(runtime, proc["argv"][1:]) if proc and proc["runtime"] is runtime else []
+    return runtime.kind, own + runtime.launch_args(role, model, effort)
 
 
 def agents_in_tab() -> dict[str, str]:
@@ -99,7 +82,8 @@ def agents_in_tab() -> dict[str, str]:
 
 
 def start(role: str, pane: str) -> None:
-    args = ["herdr", "agent", "start", names()[role], "--kind", "claude", "--pane", pane, "--timeout", "90000", "--", *launch_args(role)]
+    kind, launch_args = launch(role)
+    args = ["herdr", "agent", "start", names()[role], "--kind", kind, "--pane", pane, "--timeout", "90000", "--", *launch_args]
     # Herdr releases an exited agent's name a moment after the process ends.
     for _ in range(10):
         out = subprocess.run(args, capture_output=True, text=True)
@@ -152,23 +136,28 @@ def restart(role: str) -> dict:
     if not pane:
         sys.exit(json.dumps({"error": f"no live {role} agent; run setup"}))
     ended = session(pane)
-    # Claude Code exits on /exit; a lone ctrl+c only arms "press again to exit".
+    # Both runtimes exit on /exit. Codex's command menu takes the first enter to pick the command; in
+    # Claude Code the second lands on an empty shell prompt. A lone ctrl+c only arms "press again to exit".
     herdr("pane", "send-text", pane, "/exit")
     herdr("pane", "send-keys", pane, "enter")
+    time.sleep(1)
+    if agent_proc(pane):
+        herdr("pane", "send-keys", pane, "enter")
     for keys in ([], ["ctrl+c", "ctrl+c"], ["ctrl+d", "ctrl+d"]):
         if keys:
             herdr("agent", "send-keys", pane, *keys)
         for _ in range(8):
-            if claude_proc(pane) is None:
+            if agent_proc(pane) is None:
                 break
             time.sleep(1)
-        if claude_proc(pane) is None:
+        if agent_proc(pane) is None:
             break
     else:
         sys.exit(json.dumps({"error": f"{role} pane {pane} did not return to the shell"}))
     if ended and ended["transcript"]:
         # `crewlog.py usage` adds up sessions ended mid-step from these records.
-        crewlog.append("session", role=role, pane=pane, session_id=ended["session_id"], transcript=str(ended["transcript"]))
+        crewlog.append("session", role=role, pane=pane, runtime=ended["runtime"], model=runtimes.for_role(role, crewlog.repo())[1],
+                       session_id=ended["session_id"], transcript=str(ended["transcript"]))
     start(role, pane)
     return {"restarted": role, "pane": pane} | check()
 
@@ -181,8 +170,9 @@ def main() -> None:
         result = check()
     elif command == "restart" and len(sys.argv) > 2 and sys.argv[2] in ("oracle", "builder"):
         result = restart(sys.argv[2])
-    elif command == "args" and len(sys.argv) > 2 and sys.argv[2] in ROLE_ARGS:
-        result = {"args": launch_args(sys.argv[2])}
+    elif command == "args" and len(sys.argv) > 2 and sys.argv[2] in runtimes.ROLES:
+        kind, args = launch(sys.argv[2])
+        result = {"kind": kind, "args": args}
     else:
         sys.exit(__doc__)
     print(json.dumps(result))

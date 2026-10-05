@@ -1,18 +1,17 @@
 # ai-dev-workflow
 
-Agent skills for building software with crews of Claude Code sessions, built to
-need you as little as possible. You give intent; an Opus **steward** turns it
-into [Linear](https://linear.app) issues, releases them, and starts **crews** to
-build them in parallel. Each crew is an Opus **driver** that leads, a Sonnet
-**builder** that builds, and a Fable **oracle** that reviews the steps that
-matter. Every change goes through a reviewed plan and a reviewed diff before it
-lands.
+Agent skills for building software with crews of coding agents (Claude Code or
+Codex), built to need you as little as possible. You give intent; a **steward**
+turns it into [Linear](https://linear.app) issues, releases them, and starts
+**crews** to build them in parallel. Each crew is a **driver** that leads, a
+**builder** that builds, and an **oracle** that reviews the steps that matter.
+Every change goes through a reviewed plan and a reviewed diff before it lands.
 
 The sessions run in [Herdr](https://herdr.dev) (a terminal multiplexer for
-coding agents) and talk to each other through it. Fable is the costliest model
-in the loop, so [Jev](https://typesafe.ai), a fast classifier model, decides
-which steps it reviews, which issues and questions need you, and when each
-session should restart fresh.
+coding agents) and talk to each other through it. The oracle runs the costliest
+model in the loop, so [Jev](https://typesafe.ai), a fast classifier model,
+decides which steps it reviews, which issues and questions need you, and when
+each session should restart fresh.
 
 | Skill                                                  | What it does                                                                        |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
@@ -41,34 +40,51 @@ Crews claim issues from the shared queue and retire themselves when nothing they
 can take remains. Drivers bring the steward their questions about scope and
 acceptance; it answers them, and only high-stakes ones reach you.
 
+### Runtimes and models
+
+Each role runs on Claude Code or Codex, set per project with `Runtime:` (below).
+The defaults, overridable per role with `Models:`:
+
+| Role    | Claude Code (`Runtime: claude`, the default) | Codex (`Runtime: codex`) |
+| ------- | -------------------------------------------- | ------------------------ |
+| steward | Opus, high effort                            | GPT-6-Astra, high        |
+| driver  | Opus, high                                   | GPT-6-Astra, high        |
+| builder | Sonnet, medium                               | GPT-6.1-Sol, medium      |
+| oracle  | Fable, high                                  | GPT-6-Astra, xhigh       |
+
+Runtimes can be mixed per role (`Runtime: codex oracle=claude`). The scripts
+read each runtime's own session files for context size and token use, so Jev's
+restart decisions and the cost log work on both; Codex models are logged in
+tokens, without a dollar estimate.
+
 ### The three roles in a crew
 
 ```text
 ┌────────────────────────┬────────────────────────┐
-│                        │ oracle (Fable)         │
-│ driver (Opus)          │ reviews high-stakes    │
+│                        │ oracle                 │
+│ driver                 │ reviews high-stakes    │
 │ picks work, plans,     │ briefs and diffs;      │
 │ briefs, reviews the    │ never edits            │
 │ routine steps,         ├────────────────────────┤
-│ commits and lands      │ builder (Sonnet)       │
+│ commits and lands      │ builder                │
 │ its claimed issue      │ builds one step from   │
 │                        │ the brief, test-first  │
 └────────────────────────┴────────────────────────┘
 ```
 
-- **Driver** (left half, Opus): the tech lead. It claims the next issue it can
-  build beside the other crews, splits multi-step issues into sub-issues, writes
-  each step's **brief**, reviews the routine steps itself, triages findings,
-  commits and lands. It writes no code itself. When it disputes an oracle
-  finding, it argues once with evidence and the oracle's answer stands.
-- **Oracle** (top right, Fable): an independent reviewer for the steps Jev flags
-  as high-stakes. It reads the repository, proves findings with throwaway
+- **Driver** (left half): the tech lead. It claims the next issue it can build
+  beside the other crews, splits multi-step issues into sub-issues, writes each
+  step's **brief**, reviews the routine steps itself, triages findings, commits
+  and lands. It writes no code itself. When it disputes an oracle finding, it
+  argues once with evidence and the oracle's answer stands.
+- **Oracle** (top right): an independent reviewer for the steps Jev flags as
+  high-stakes. It reads the repository, proves findings with throwaway
   reproductions outside it, and replies with a verdict and findings ranked P1 to
   P3. P1 and P2 block a commit; P3 does not.
-- **Builder** (bottom right, Sonnet): builds one step at a time, test-first, and
-  leaves its changes uncommitted. Being the cheapest model, it runs the tests;
-  before each commit the driver reruns the brief's verify commands once, reading
-  only exit codes and summary lines, to check the builder's report.
+- **Builder** (bottom right): builds one step at a time, test-first, and leaves
+  its changes uncommitted. Being the cheapest model, it runs the tests; before
+  each commit the driver reruns the brief's verify commands once, reading only
+  exit codes and summary lines, to check the builder's report.
 
 The layout is fixed: each driver builds it, and restarts happen in place.
 
@@ -201,24 +217,28 @@ the issue it claimed.
 
 ### Requirements
 
-- [Herdr](https://herdr.dev), with Claude Code running inside it
-  (`HERDR_ENV=1`), and access to Opus, Sonnet and Fable.
+- [Herdr](https://herdr.dev), with the agents running inside it (`HERDR_ENV=1`):
+  Claude Code with access to Opus, Sonnet and Fable, or the Codex CLI, or both.
 - A [TypeSafe](https://typesafe.ai) API key for Jev, in `TYPESAFE_API_KEY` or in
   [fnox](https://github.com/jdx/fnox) (project config, or
   `~/.config/fnox/config.toml`).
 - [`uv`](https://docs.astral.sh/uv/) (it runs `jev.py` and installs its one
   dependency), Python 3, `git`, and for `Land: crew -> main` the GitHub CLI
   (`gh`).
-- For the Linear queue: a Linear workspace, and the Linear MCP server or a
-  Linear API key for the steward and drivers.
+- For the Linear queue: a Linear workspace, and the Linear MCP server in each
+  runtime the steward and drivers use. For Codex:
+  `codex mcp add linear --url https://mcp.linear.app/mcp --bearer-token-env-var LINEAR_API_KEY`.
+- For Codex: trust the repository once (start Codex in it and accept); crews'
+  worktrees inherit that trust.
 
 ### Install the skills
 
 ```bash
 git clone https://github.com/robertguss/ai-dev-workflow.git ~/ai-dev-workflow
-mkdir -p ~/.claude/skills
+mkdir -p ~/.agents/skills ~/.claude/skills
 for s in crew linear-migration; do
-  ln -s ~/ai-dev-workflow/skills/$s ~/.claude/skills/$s
+  ln -s ~/ai-dev-workflow/skills/$s ~/.agents/skills/$s   # Codex
+  ln -s ~/ai-dev-workflow/skills/$s ~/.claude/skills/$s   # Claude Code
 done
 ```
 
@@ -230,7 +250,7 @@ Make these statuses exist with these exact names: `Backlog`, `Ready`
 
 ### Opt a repository in
 
-Add a `## Crew` section to the repository's root `CLAUDE.md`:
+Add a `## Crew` section to the repository's root `CLAUDE.md` or `AGENTS.md`:
 
 ```text
 ## Crew
@@ -239,20 +259,23 @@ Linear: team <KEY>, project <name>
 Land: crew -> main
 Crews: 2
 Shared: <globs every crew must take turns on, beyond the built-in lockfiles, migrations and CI>
+Runtime: codex
 ```
 
-`Land` defaults to `crew -> main` and `Crews` to 2; `Shared` is optional. Write
-the project's goals in the Linear project's description: the steward prioritizes
-against them. Leave out `Linear:` to run a single crew from `HANDOFF.md` alone.
+`Land` defaults to `crew -> main`, `Crews` to 2 and `Runtime` to `claude`;
+`Shared` and `Models` are optional. Write the project's goals in the Linear
+project's description: the steward prioritizes against them. Leave out `Linear:`
+to run a single crew from `HANDOFF.md` alone.
 
 ## Day to day
 
-1. Open a Herdr tab in the repository and start Claude Code with
-   `claude --model opus --effort high`.
-2. Run `/crew`. That session becomes the steward: it checks the board, shapes
-   and releases what is there, starts crews, each with your permission mode, and
-   keeps running a pass every ten minutes so your changes in Linear are picked
-   up.
+1. Open a Herdr tab in the repository and start the steward's runtime: Claude
+   Code with `claude --model opus --effort high`, or Codex with
+   `codex -m gpt-6-astra -c model_reasoning_effort="high"`.
+2. Run `/crew` (in Codex: "Use the crew skill"). That session becomes the
+   steward: it checks the board, shapes and releases what is there, starts crews
+   on the project's runtime, and keeps a ticker prompting it for a pass every
+   ten minutes so your changes in Linear are picked up.
 3. Give it intent: write rough issues in Linear, or tell the steward in its
    pane. It reports each pass in a few lines.
 4. Answer the `Needs Input` questions it sends you, in Linear or in its pane.
@@ -290,7 +313,8 @@ skills/
     end-of-chunk.md   retiring a crew, or the handoff and a replacement driver
     scripts/
       panes.py        builds, checks and restarts a crew's three-pane layout
-      crews.py        starts, lists and stops crews in their own worktrees
+      crews.py        starts, lists and stops crews in their own worktrees; the steward's ticker
+      runtimes.py     Claude Code and Codex: models per role, launch arguments, session files
       parallel.py     which Ready issues can be built beside the work in flight
       jev.py          Jev's review gate, release, escalation, duplicate and fresh-session checks
       verify.py       reruns the verify commands before commit, printing only exit codes and tails

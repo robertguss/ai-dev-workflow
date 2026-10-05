@@ -11,10 +11,12 @@ target every other command by pane ID.
 
 - `panes.py setup`: creates whatever is missing and prints the three pane IDs.
 - `panes.py check`: `layout_ok`, or the problems. Run it after anything odd.
-- `panes.py restart oracle|builder`: stops the pane's Claude session and starts
-  a fresh one in the same pane, with your own launch arguments (permission mode)
-  plus the role's model, effort and denied tools (`ROLE_ARGS` in `panes.py`).
-- `panes.py args driver|steward`: the arguments for a replacement session.
+- `panes.py restart oracle|builder`: stops the pane's agent session and starts a
+  fresh one in the same pane, on the role's runtime, model and effort
+  (`scripts/runtimes.py`), plus your own permission settings when you run the
+  same runtime.
+- `panes.py args driver|steward`: the Herdr agent kind and arguments for a
+  replacement session.
 
 ## Sending a prompt
 

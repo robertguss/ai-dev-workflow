@@ -96,13 +96,14 @@ With Linear, send the steward `chunk <crew>`, without `--wait`.
 
 ### 6. Start the new driver
 
-1. `panes.py args driver` gives the new session's arguments: your own permission
-   mode, with the driver's model and effort.
+1. `panes.py args driver` gives the new session's Herdr agent `kind` and `args`:
+   the driver's runtime, model and effort, plus your own permission settings
+   when you run the same runtime.
 2. Split below yourself, free your name, and start the replacement:
    ```bash
    herdr pane split --current --direction down --cwd "$PWD" --no-focus
    herdr agent rename "$HERDR_PANE_ID" --clear
-   herdr agent start driver-<tab> --kind claude --pane <new-pane> -- <args>
+   herdr agent start driver-<tab> --kind <kind> --pane <new-pane> -- <args>
    ```
    The split is temporary: once you close, the new driver fills the left half.
 3. **Bootstrap.** Send through a prompt file, with `--wait`:
