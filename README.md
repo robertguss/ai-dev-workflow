@@ -184,6 +184,10 @@ Set per repository, in `CLAUDE.md`:
   merged back into `crew` on the steward's next pass.
 - **`Land: main`** (projects not yet in production): crews rebase, verify and
   push straight to `main`.
+- **Any other branch** works the same way: `Land: feature-x` lands straight on
+  `feature-x`, and `Land: crew -> feature-x` lands on `crew` behind a release PR
+  into `feature-x`. Use it when the work lives on a long-running branch and
+  `main` must stay untouched.
 
 Each crew rebases onto the land branch, reruns the verify commands and pushes; a
 push that loses a race to another crew simply rebases and verifies again.

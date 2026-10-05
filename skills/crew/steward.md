@@ -24,24 +24,26 @@ and reading panes are in [herdr-ops.md](herdr-ops.md).
    ## Crew
 
    Linear: team <KEY>, project <name>
-   Land: crew -> main        (or: main)
+   Land: crew -> main        (or: main, or any branch, with or without -> target)
    Crews: 2
    Shared: <globs>           (optional)
    Runtime: codex            (optional: claude | codex, per role: oracle=claude)
    Models: builder=gpt-6-luna:low   (optional per-role model[:effort])
    ```
-   `Land` defaults to `crew -> main`, `Crews` to 2. The **land branch** is
-   `crew` for `crew -> main` and `main` for `main`. `Shared` adds to the
-   built-in shared spine in `scripts/parallel.py`. `Runtime` defaults to the
-   runtime you run on; the scripts read it and `Models` themselves, and the
-   defaults per runtime are in `scripts/runtimes.py`. A field your prompt gives
-   (a migration starts you before the instructions have a `Linear:` line) wins.
+   `Land` defaults to `crew -> main`, `Crews` to 2. `Land: <branch>` lands
+   crews' work straight on that branch; `Land: <branch> -> <target>` lands it on
+   `<branch>`, and a release PR carries it to `<target>`. The **land branch** is
+   the branch before the arrow, or the only one. `Shared` adds to the built-in
+   shared spine in `scripts/parallel.py`. `Runtime` defaults to the runtime you
+   run on; the scripts read it and `Models` themselves, and the defaults per
+   runtime are in `scripts/runtimes.py`. A field your prompt gives (a migration
+   starts you before the instructions have a `Linear:` line) wins.
 3. Name yourself: `herdr agent rename "$HERDR_PANE_ID" steward-<tab>`, your tab
    ID lowercased with `:` turned to `-`. Drivers reach you by that name.
 4. Check the Linear statuses (linear.md); name any missing ones to the user and
    stop.
-5. For `crew -> main`: make sure `origin/crew` exists (else push `origin/main`
-   to it: `git push origin origin/main:refs/heads/crew`).
+5. With a release target: make sure `origin/<land branch>` exists (else push the
+   target to it: `git push origin origin/<target>:refs/heads/<land branch>`).
 6. Keep passes coming while you are otherwise idle, since the user answers and
    adds work in Linear without telling you. When `crews.py list` shows
    `ticker: false`, start one in a pane below yourself:
@@ -106,16 +108,17 @@ step's criterion holds before the next begins.
 
    Done when each of these holds across the project.
 
-6. **Release PR** (`crew -> main` only). `git fetch origin`. If `origin/main`
-   has commits `origin/crew` lacks (a hotfix), merge `main` into `crew` in a
-   temporary worktree outside the user's checkout and push; a conflict goes to
-   the user. When `origin/main..origin/crew` holds commits and no PR from `crew`
-   to `main` is open (the user merged the last one), open one:
-   `gh pr create --base main --head crew --title "Release: crew → main"`. Then
-   set its description: each issue landed on `crew` and not yet on `main`
-   (`git log origin/main..origin/crew`), with its title and, for each that the
-   oracle reviewed, Jev's risk flags. Done when the PR lists exactly what
-   merging it would deploy, or nothing awaits release.
+6. **Release PR** (with a release target only). `git fetch origin`. If the
+   target has commits the land branch lacks (a hotfix), merge the target into
+   the land branch in a temporary worktree outside the user's checkout and push;
+   a conflict goes to the user. When `origin/<target>..origin/<land branch>`
+   holds commits and no PR from the land branch to the target is open (the user
+   merged the last one), open one:
+   `gh pr create --base <target> --head <land branch> --title "Release: <land branch> → <target>"`.
+   Then set its description: each issue landed and not yet on the target
+   (`git log origin/<target>..origin/<land branch>`), with its title and, for
+   each that the oracle reviewed, Jev's risk flags. Done when the PR lists
+   exactly what merging it would deploy, or nothing awaits release.
 7. **Dispatch.** Build the input for `scripts/parallel.py` as linear.md's
    pulling step does, and run it. From `crews.py list`, count the live crews and
    the idle ones: live crews holding no active issue, which are about to pull.
@@ -123,8 +126,8 @@ step's criterion holds before the next begins.
    each with `crews.py start --land <land branch>`. Crews retire themselves when
    their work runs out. Done when those crews are started.
 8. **Summary.** Tell the user in a few lines: what you released, what you asked
-   them (with links), what you closed as duplicates, the crews running, and for
-   `crew -> main` how many issues the release PR holds. Then run
+   them (with links), what you closed as duplicates, the crews running, and,
+   with a release target, how many issues the release PR holds. Then run
    `jev.py fresh --issue - --role steward --pane "$HERDR_PANE_ID"`; on
    `fresh: true`, replace yourself (below).
 
