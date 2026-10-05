@@ -207,9 +207,9 @@ message through a file as in herdr-ops.md:
 ## End of chunk
 
 At each step boundary, run
-`jev.py fresh --issue <next ID> --role driver --pane "$HERDR_PANE_ID" --next <next brief or issue text>`.
-End the chunk when it says `fresh: true`, no issue remains that you can take, or
-the user asks, preferring a boundary between issues to one inside a split issue.
+`jev.py fresh --issue <next ID> --role driver --pane "$HERDR_PANE_ID"`. End the
+chunk when it says `fresh: true`, no issue remains that you can take, or the
+user asks, preferring a boundary between issues to one inside a split issue.
 Then follow [end-of-chunk.md](end-of-chunk.md).
 
 ## Logging

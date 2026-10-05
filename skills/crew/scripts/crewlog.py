@@ -18,7 +18,8 @@ or stops; the driver writes the rest:
   crewlog.py dispute  --issue ID --finding TITLE --outcome withdrawn|upheld
                                                       the driver contested an oracle finding
   crewlog.py chunk    --crew NAME --steps N --ending replace|retire
-                                                      a driver session ended
+                                                      a driver session ended; measures its overhead since the
+                                                      last step's usage (handoff, review, restarts)
   crewlog.py feedback --issue ID --text TEXT          the user's own verdict on a decision or step
   crewlog.py report   [--days N] [--repo PATH]        how well the gate and fresh checks are doing
   crewlog.py replay   [--flag-at F] [--stakes-at S]   re-run past gate decisions with other thresholds (default: jev.py's)
@@ -114,23 +115,22 @@ def cost(role: str, u: dict) -> float:
     ) / 1e6, 4)
 
 
-def cmd_usage(args) -> dict:
+def measure(since: datetime) -> dict:
+    """Tokens and estimated cost per role in this crew's panes since `since`, counting
+    sessions restarted meanwhile (panes.py logs each, and restarts happen in place)."""
     sys.path.insert(0, str(Path(__file__).parent))
     import panes  # noqa: E402
 
-    rs = records(repo_path=repo())
-    starts = [r for r in rs if r["kind"] == "step" and r.get("issue") == args.issue]
-    if not starts:
-        sys.exit(json.dumps({"error": f"no `step` record for {args.issue}"}))
-    since = datetime.fromisoformat(starts[-1]["at"])
-    ended = [r for r in rs if r["kind"] == "session" and datetime.fromisoformat(r["at"]) >= since]
+    ended = [r for r in records(repo_path=repo()) if r["kind"] == "session" and datetime.fromisoformat(r["at"]) >= since]
     live = panes.agents_in_tab()
     roles = {role: live.get(name) for role, name in panes.names().items()}
     roles["driver"] = roles["driver"] or os.environ.get("HERDR_PANE_ID")
     per_role = {}
     for role, pane in roles.items():
-        transcripts = {Path(r["transcript"]) for r in ended if r.get("role") == role}
-        if pane and (current := panes.session(pane)) and current["transcript"]:
+        if not pane:
+            continue
+        transcripts = {Path(r["transcript"]) for r in ended if r.get("role") == role and r.get("pane") == pane}
+        if (current := panes.session(pane)) and current["transcript"]:
             transcripts.add(current["transcript"])
         u = Counter()
         for transcript in transcripts:
@@ -138,8 +138,25 @@ def cmd_usage(args) -> dict:
                 u.update(usage_since(transcript, since))
         if u:
             per_role[role] = dict(u) | {"usd": cost(role, u), "sessions": len(transcripts)}
-    return append("usage", issue=args.issue, since=starts[-1]["at"], roles=per_role,
+    return per_role
+
+
+def cmd_usage(args) -> dict:
+    starts = [r for r in records(repo_path=repo()) if r["kind"] == "step" and r.get("issue") == args.issue]
+    if not starts:
+        sys.exit(json.dumps({"error": f"no `step` record for {args.issue}"}))
+    per_role = measure(datetime.fromisoformat(starts[-1]["at"]))
+    return append("usage", issue=args.issue, since=starts[-1]["at"], tab=os.environ.get("HERDR_TAB_ID"), roles=per_role,
                   usd=round(sum(r["usd"] for r in per_role.values()), 4), counted="per-message")
+
+
+def cmd_chunk(args) -> dict:
+    """A driver session ends; its overhead (handoff, review, restarts) is measured from the last step's usage."""
+    tab = os.environ.get("HERDR_TAB_ID")
+    last = [r for r in records(repo_path=repo()) if r["kind"] == "usage" and tab and r.get("tab") == tab]
+    overhead = measure(datetime.fromisoformat(last[-1]["at"])) if last else {}
+    return append("chunk", crew=args.crew, steps=args.steps, ending=args.ending, tab=tab, overhead=overhead,
+                  overhead_usd=round(sum(r["usd"] for r in overhead.values()), 4) if last else None)
 
 
 # ---------- report ----------
@@ -208,6 +225,9 @@ def cmd_report(args) -> None:
         steps = sorted(r["steps"] for r in chunks)
         print(f"  {len(chunks)} chunks: {dict(Counter(r['ending'] for r in chunks))}; steps per chunk "
               f"min {steps[0]}, median {steps[len(steps) // 2]}, max {steps[-1]}")
+        if overheads := [r["overhead_usd"] for r in chunks if r.get("ending") == "replace" and r.get("overhead_usd") is not None]:
+            print(f"  handoff overhead per replaced driver: ${sum(overheads) / len(overheads):.2f} ({len(overheads)} measured; "
+                  "the new driver's own start-up is not included)")
     # The driver's fresh check at each step boundary logs its context as the next step begins.
     start_tokens = {d["issue"]: d["tokens"] for d in freshes if d["role"] == "driver"}
     buckets: dict[str, list[float]] = {}
@@ -319,6 +339,8 @@ def main() -> None:
         return cmd_replay(args)
     if args.command == "usage":
         result = cmd_usage(args)
+    elif args.command == "chunk":
+        result = cmd_chunk(args)
     else:
         fields = {k: v for k, v in vars(args).items() if k != "command"}
         result = append(args.command, **fields)

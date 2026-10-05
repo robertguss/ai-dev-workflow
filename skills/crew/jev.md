@@ -33,10 +33,13 @@ jev.py fresh --issue <ID> --role builder|oracle|driver|steward --pane <pane> [--
 
 It reads the pane's Claude transcript for its context size and recent prompts,
 and the pane's recent output. Returns `fresh: true|false` with `why`: a session
-restarts when its context passes its role's limit, when its recent output looks
-stuck (repeating a failed fix, contradicting its instructions), or when the next
-step is unrelated to its recent work and it already carries a fair amount of
-context.
+restarts when its context passes its role's hard limit, or when its recent
+output looks stuck (repeating a failed fix, contradicting its instructions). A
+builder or oracle also restarts when the next step is unrelated to its recent
+work and it already carries a fair amount of context; the driver and steward
+carry the whole project, so only their hard limit and the stuck check apply. A
+session that has barely been used (under `FRESH_FLOOR` tokens) is kept without
+asking Jev.
 
 Run it at step boundaries, and mid-step only for a builder that has failed the
 same way twice: reviewers keep their findings until the step commits.
@@ -89,7 +92,10 @@ draws the lines. Work from `crewlog.py report`, with the user:
    Change `FLAG_AT` and `STAKES_AT` in `jev.py` only when replay shows no lost
    findings.
 4. **Fresh sessions:** compare restarts with later `stuck` flags and the user's
-   feedback; adjust the `CONTEXT` table in `jev.py`.
+   feedback; adjust the `CONTEXT` table in `jev.py`. For the driver, read the
+   report's Chunks section: when a replaced driver's handoff overhead is large
+   next to its steps' cost, or chunks run only a step or two, raise its hard
+   limit.
 
 5. **Releases and escalations:** the user's verdicts ("that needed me", "why was
    I asked this?") arrive as `crewlog.py feedback`; an escape on a step the

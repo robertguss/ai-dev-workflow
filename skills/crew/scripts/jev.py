@@ -51,14 +51,17 @@ DUPLICATE_AT = 0.8
 # Spot checks: this share of steps judged routine still go to the oracle, so the log can
 # show what the gate misses. Set CREW_AUDIT_RATE=0 to turn off.
 AUDIT_RATE = float(os.environ.get("CREW_AUDIT_RATE", "0.1"))
-# fresh: context sizes (tokens) per role. Above HARD always restart; above SOFT restart
-# when the next step is unrelated to what the session has been doing.
+# fresh: context sizes (tokens) per role. Above HARD always restart. The builder and oracle work
+# one step's code, so they also restart above SOFT when the next step is unrelated; the driver and
+# steward carry the whole project, and every step is a different issue, so only HARD applies to them.
 CONTEXT = {
     "builder": {"soft": 60_000, "hard": 150_000},
     "oracle": {"soft": 60_000, "hard": 120_000},
-    "driver": {"soft": 150_000, "hard": 250_000},
-    "steward": {"soft": 150_000, "hard": 250_000},
+    "driver": {"hard": 250_000},
+    "steward": {"hard": 250_000},
 }
+# Below this a session has barely been used: restarting it gains nothing, so Jev is not asked.
+FRESH_FLOOR = 20_000
 STRUGGLING_AT = 0.7
 RELATED_AT = 0.5
 
@@ -258,7 +261,7 @@ def decide_fresh(role: str, tokens: int, related: float | None, struggling: floa
         fresh, why = True, f"recent output looks stuck ({struggling:.2f})"
     elif role == "builder" and related is not None and related < RELATED_AT:
         fresh, why = True, f"next step unrelated to its recent work ({related:.2f})"
-    elif related is not None and related < RELATED_AT and tokens >= limits["soft"]:
+    elif "soft" in limits and related is not None and related < RELATED_AT and tokens >= limits["soft"]:
         fresh, why = True, f"next step unrelated ({related:.2f}) and context {tokens:,} >= {limits['soft']:,}"
     else:
         fresh, why = False, f"keep: context {tokens:,}, related {related if related is None else round(related, 2)}"
@@ -272,18 +275,23 @@ def cmd_fresh(args) -> dict:
     if not session:
         sys.exit(json.dumps({"error": f"no Claude session in pane {args.pane}"}))
     tokens, history = context_and_history(session["transcript"]) if session["transcript"] else (0, [])
+    if tokens < FRESH_FLOOR:
+        return {"command": "fresh", "role": args.role, "pane": args.pane, "session": session["session_id"],
+                "fresh": False, "why": f"keep: barely used ({tokens:,} tokens)", "tokens": tokens}
     state = {"recent_prompts": history, "recent_output": pane_tail(args.pane)}
     questions = {"struggling": Noul(
         instructions="Does `recent_output` show the agent repeating a failed fix, going in circles, "
         "contradicting its instructions, or losing track of the task?"
     )}
-    if args.next:
+    # Relatedness only matters to roles with a SOFT limit.
+    asks_related = bool(args.next) and "soft" in CONTEXT[args.role]
+    if asks_related:
         state["next_step"] = read(args.next, 6_000)
         questions["related"] = Noul(
             instructions="Is `next_step` about the same feature and the same files as the work in `recent_prompts`?"
         )
     response = ask(state, questions)
-    related = response.nouls["related"].noul if args.next else None
+    related = response.nouls["related"].noul if asks_related else None
     return {"command": "fresh", "role": args.role, "pane": args.pane, "session": session["session_id"]} | decide_fresh(
         args.role, tokens, related, response.nouls["struggling"].noul
     )
