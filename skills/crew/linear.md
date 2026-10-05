@@ -13,15 +13,15 @@ the change itself is theirs.
 
 ## Statuses
 
-| Status      | Meaning                                  | Set by                                                                          |
-| ----------- | ---------------------------------------- | ------------------------------------------------------------------------------- |
-| `Backlog`   | Ideas and discovered work; not buildable | user; driver for discovered work                                                |
-| `Ready`     | Released for building                    | user; driver for sub-issues of a released parent and for answered parked issues |
-| `Planning`  | Brief in plan review                     | driver                                                                          |
-| `Building`  | Builder building or fixing                | driver                                                                          |
-| `In Review` | Diff in oracle review                    | driver                                                                          |
+| Status        | Meaning                                  | Set by                                                                          |
+| ------------- | ---------------------------------------- | ------------------------------------------------------------------------------- |
+| `Backlog`     | Ideas and discovered work; not buildable | user; driver for discovered work                                                |
+| `Ready`       | Released for building                    | user; driver for sub-issues of a released parent and for answered parked issues |
+| `Planning`    | Brief in plan review                     | driver                                                                          |
+| `Building`    | Builder building or fixing               | driver                                                                          |
+| `In Review`   | Diff in review (oracle or driver)        | driver                                                                          |
 | `Needs Input` | Waiting on the user                      | driver                                                                          |
-| `Done`      | Committed                                | driver                                                                          |
+| `Done`        | Committed                                | driver                                                                          |
 
 A split parent moves to `Building` when its first sub-issue starts and to `Done`
 when its last sub-issue is done.
