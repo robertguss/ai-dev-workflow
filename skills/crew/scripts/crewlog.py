@@ -95,11 +95,12 @@ def measure(since: datetime) -> dict:
     for role, pane in roles.items():
         if not pane:
             continue
-        _, model, _ = runtimes.for_role(role, repo())
+        current = panes.session(pane)
+        _, model, _ = runtimes.for_role(role, repo(), current and current["runtime"])
         # (session file, runtime, model): sessions restarted meanwhile carry their own; older records were Claude's.
         sessions = {(Path(r["transcript"]), r.get("runtime", "claude"), r.get("model", model))
                     for r in ended if r.get("role") == role and r.get("pane") == pane}
-        if (current := panes.session(pane)) and current["transcript"]:
+        if current and current["transcript"]:
             sessions.add((current["transcript"], current["runtime"], model))
         u, usd, unpriced = Counter(), 0.0, set()
         for transcript, runtime, session_model in sessions:

@@ -45,12 +45,12 @@ acceptance; it answers them, and only high-stakes ones reach you.
 Each role runs on Claude Code or Codex, set per project with `Runtime:` (below).
 The defaults, overridable per role with `Models:`:
 
-| Role    | Claude Code (`Runtime: claude`, the default) | Codex (`Runtime: codex`) |
-| ------- | -------------------------------------------- | ------------------------ |
-| steward | Opus, high effort                            | GPT-6-Astra, high        |
-| driver  | Opus, high                                   | GPT-6-Astra, high        |
-| builder | Sonnet, medium                               | GPT-6.1-Sol, medium      |
-| oracle  | Fable, high                                  | GPT-6-Astra, xhigh       |
+| Role    | Claude Code (`Runtime: claude`) | Codex (`Runtime: codex`) |
+| ------- | ------------------------------- | ------------------------ |
+| steward | Opus, high effort               | GPT-6-Astra, high        |
+| driver  | Opus, high                      | GPT-6-Astra, high        |
+| builder | Sonnet, medium                  | GPT-6.1-Sol, medium      |
+| oracle  | Fable, high                     | GPT-6-Astra, xhigh       |
 
 Runtimes can be mixed per role (`Runtime: codex oracle=claude`). The scripts
 read each runtime's own session files for context size and token use, so Jev's
@@ -263,10 +263,11 @@ Shared: <globs every crew must take turns on, beyond the built-in lockfiles, mig
 Runtime: codex
 ```
 
-`Land` defaults to `crew -> main`, `Crews` to 2 and `Runtime` to `claude`;
-`Shared` and `Models` are optional. Write the project's goals in the Linear
-project's description: the steward prioritizes against them. Leave out `Linear:`
-to run a single crew from `HANDOFF.md` alone.
+`Land` defaults to `crew -> main`, `Crews` to 2, and `Runtime` to the runtime
+the steward (or a no-Linear driver) runs on; `Shared` and `Models` are optional.
+Write the project's goals in the Linear project's description: the steward
+prioritizes against them. Leave out `Linear:` to run a single crew from
+`HANDOFF.md` alone.
 
 ## Day to day
 

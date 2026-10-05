@@ -32,10 +32,10 @@ and reading panes are in [herdr-ops.md](herdr-ops.md).
    ```
    `Land` defaults to `crew -> main`, `Crews` to 2. The **land branch** is
    `crew` for `crew -> main` and `main` for `main`. `Shared` adds to the
-   built-in shared spine in `scripts/parallel.py`. `Runtime` defaults to
-   `claude`; the scripts read it and `Models` themselves, and the defaults per
-   runtime are in `scripts/runtimes.py`. A field your prompt gives (a migration
-   starts you before the instructions have a `Linear:` line) wins.
+   built-in shared spine in `scripts/parallel.py`. `Runtime` defaults to the
+   runtime you run on; the scripts read it and `Models` themselves, and the
+   defaults per runtime are in `scripts/runtimes.py`. A field your prompt gives
+   (a migration starts you before the instructions have a `Linear:` line) wins.
 3. Name yourself: `herdr agent rename "$HERDR_PANE_ID" steward-<tab>`, your tab
    ID lowercased with `:` turned to `-`. Drivers reach you by that name.
 4. Check the Linear statuses (linear.md); name any missing ones to the user and

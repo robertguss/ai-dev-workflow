@@ -68,8 +68,8 @@ def session(pane: str) -> dict | None:
 def launch(role: str) -> tuple[str, list[str]]:
     """The Herdr agent kind and arguments for a new session of `role`: the role's runtime, model and effort,
     plus the caller's own settings (permission mode, sandbox) when the caller runs the same runtime."""
-    runtime, model, effort = runtimes.for_role(role, crewlog.repo())
     proc = agent_proc(env("HERDR_PANE_ID"))
+    runtime, model, effort = runtimes.for_role(role, crewlog.repo(), proc and proc["runtime"].name)
     own = runtimes.reusable_args(runtime, proc["argv"][1:]) if proc and proc["runtime"] is runtime else []
     return runtime.kind, own + runtime.launch_args(role, model, effort)
 
@@ -84,10 +84,11 @@ def agents_in_tab() -> dict[str, str]:
 def start(role: str, pane: str) -> None:
     kind, launch_args = launch(role)
     args = ["herdr", "agent", "start", names()[role], "--kind", kind, "--pane", pane, "--timeout", "90000", "--", *launch_args]
-    # Herdr releases an exited agent's name a moment after the process ends.
-    for _ in range(10):
+    # Herdr releases an exited agent's name a moment after the process ends, and a new pane's shell takes a
+    # moment to reach its prompt.
+    for _ in range(15):
         out = subprocess.run(args, capture_output=True, text=True)
-        if out.returncode == 0 or "agent_name_taken" not in (out.stderr + out.stdout):
+        if out.returncode == 0 or not any(code in out.stderr + out.stdout for code in ("agent_name_taken", "agent_pane_busy")):
             break
         time.sleep(2)
     if out.returncode != 0:
@@ -156,7 +157,8 @@ def restart(role: str) -> dict:
         sys.exit(json.dumps({"error": f"{role} pane {pane} did not return to the shell"}))
     if ended and ended["transcript"]:
         # `crewlog.py usage` adds up sessions ended mid-step from these records.
-        crewlog.append("session", role=role, pane=pane, runtime=ended["runtime"], model=runtimes.for_role(role, crewlog.repo())[1],
+        crewlog.append("session", role=role, pane=pane, runtime=ended["runtime"],
+                       model=runtimes.for_role(role, crewlog.repo(), ended["runtime"])[1],
                        session_id=ended["session_id"], transcript=str(ended["transcript"]))
     start(role, pane)
     return {"restarted": role, "pane": pane} | check()

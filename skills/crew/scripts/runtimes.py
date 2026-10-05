@@ -3,7 +3,7 @@
 
 The project's `## Crew` section (in CLAUDE.md or AGENTS.md) picks the runtime:
 
-  Runtime: codex                  every role on Codex (default: claude)
+  Runtime: codex                  every role on Codex (default: the runtime of whoever starts the role)
   Runtime: codex oracle=claude    every role on Codex except the oracle
   Models: builder=gpt-6-luna:low  optional per-role model[:effort] overrides
 
@@ -185,11 +185,12 @@ def crew_config(root: str) -> dict[str, str]:
     return {}
 
 
-def for_role(role: str, root: str) -> tuple:
-    """(runtime, model, effort) for a role in this project."""
+def for_role(role: str, root: str, default: str | None = None) -> tuple:
+    """(runtime, model, effort) for a role in this project. Without a `Runtime:` default, a role runs on
+    `default` (the caller's runtime: a crew started from Codex stays on Codex), else Claude Code."""
     fields = crew_config(root)
-    words = fields.get("Runtime", "claude").split()
-    name = next((w for w in words if "=" not in w), "claude")
+    words = fields.get("Runtime", "").split()
+    name = next((w for w in words if "=" not in w), default or "claude")
     name = dict(w.split("=", 1) for w in words if "=" in w).get(role, name)
     model, effort = DEFAULTS[name][role]
     override = dict(w.split("=", 1) for w in fields.get("Models", "").split() if "=" in w).get(role)
