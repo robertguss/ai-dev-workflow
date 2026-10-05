@@ -106,12 +106,13 @@ def gate_questions(has_report: bool) -> dict:
     return questions
 
 
-def decide_gate(stakes: float, flags: dict[str, float]) -> dict:
-    fired = sorted(name for name, p in flags.items() if p >= FLAG_AT)
-    send = "oracle" if fired or stakes >= STAKES_AT else "self"
+def decide_gate(stakes: float, flags: dict[str, float], flag_at: float = FLAG_AT, stakes_at: float = STAKES_AT) -> dict:
+    """The gate's one rule. `crewlog.py replay` calls it with other cutoffs."""
+    fired = sorted(name for name, p in flags.items() if p >= flag_at)
+    send = "oracle" if fired or stakes >= stakes_at else "self"
     why = (
         f"risk flags: {', '.join(fired)}" if fired
-        else f"stakes {stakes:.2f} >= {STAKES_AT}" if stakes >= STAKES_AT
+        else f"stakes {stakes:.2f} >= {stakes_at}" if stakes >= stakes_at
         else f"routine: stakes {stakes:.2f}, no risk flags"
     )
     return {"send_to": send, "why": why, "stakes": round(stakes, 2), "flags": {k: round(v, 2) for k, v in flags.items()}}

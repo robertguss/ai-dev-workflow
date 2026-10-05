@@ -14,7 +14,7 @@ records; the driver writes the rest:
   crewlog.py mismatch --issue ID --why TEXT           verify.py disagreed with the builder's report
   crewlog.py feedback --issue ID --text TEXT          the user's own verdict on a decision or step
   crewlog.py report   [--days N] [--repo PATH]        how well the gate and fresh checks are doing
-  crewlog.py replay   [--flag-at F] [--stakes-at S]   re-run past gate decisions with other thresholds
+  crewlog.py replay   [--flag-at F] [--stakes-at S]   re-run past gate decisions with other thresholds (default: jev.py's)
 """
 
 from __future__ import annotations
@@ -208,26 +208,32 @@ def cmd_report(args) -> None:
 
 
 def cmd_replay(args) -> None:
+    sys.path.insert(0, str(Path(__file__).parent))
+    import jev  # noqa: E402
+
+    flag_at = jev.FLAG_AT if args.flag_at is None else args.flag_at
+    stakes_at = jev.STAKES_AT if args.stakes_at is None else args.stakes_at
     rs = records(args.days, args.repo)
     reviews = [r for r in rs if r["kind"] == "review"]
     gates = [r for r in rs if r["kind"] == "decision" and r.get("command") == "gate"]
     changed, saved, added, lost = [], 0, 0, 0
     for g in gates:
-        fired = [k for k, p in g["flags"].items() if p >= args.flag_at]
-        would = "oracle" if fired or g["stakes"] >= args.stakes_at else "self"
-        if would != g["send_to"]:
+        # A spot check was logged as `oracle`, but the gate itself had said `self`.
+        was = "self" if g.get("audit") else g["send_to"]
+        would = jev.decide_gate(g["stakes"], g["flags"], flag_at, stakes_at)["send_to"]
+        if would != was:
             o = outcome_of(g, reviews)
-            changed.append((g, would, o))
+            changed.append((g, was, would, o))
             if would == "self" and "P1/P2" in o and "oracle" in o:
                 lost += 1
             if would == "self":
                 saved += 1
             else:
                 added += 1
-    print(f"flag_at={args.flag_at} stakes_at={args.stakes_at}: {len(changed)} of {len(gates)} decisions change")
+    print(f"flag_at={flag_at} stakes_at={stakes_at}: {len(changed)} of {len(gates)} decisions change")
     print(f"  {added} more oracle reviews, {saved} fewer; {lost} of the dropped ones had P1/P2 findings the driver would now have to catch")
-    for g, would, o in changed:
-        print(f"  {g.get('issue')} {g['phase']}: {g['send_to']} -> {would}  [{o}] stakes={g['stakes']}  {g.get('title', '')}")
+    for g, was, would, o in changed:
+        print(f"  {g.get('issue')} {g['phase']}: {was} -> {would}  [{o}] stakes={g['stakes']}  {g.get('title', '')}")
 
 
 def main() -> None:
@@ -254,7 +260,7 @@ def main() -> None:
     p = sub.add_parser("feedback"); p.add_argument("--issue"); p.add_argument("--text", required=True)
     for name in ("report", "replay"):
         p = sub.add_parser(name); p.add_argument("--days", type=int); p.add_argument("--repo")
-    p.add_argument("--flag-at", type=float, default=0.7); p.add_argument("--stakes-at", type=float, default=1.5)
+    p.add_argument("--flag-at", type=float); p.add_argument("--stakes-at", type=float)  # default: jev.py's cutoffs
     args = parser.parse_args()
 
     if args.command == "report":
