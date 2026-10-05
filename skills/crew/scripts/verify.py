@@ -44,7 +44,8 @@ def main() -> None:
     parser.add_argument("commands", nargs="+")
     args = parser.parse_args()
 
-    root = crewlog.repo()
+    # The checkout being landed: a crew's worktree, not the main checkout crewlog tags records with.
+    root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or "."
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     log_path = crewlog.LOG.parent / "verify" / f"{args.issue}-{stamp}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)

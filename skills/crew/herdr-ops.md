@@ -1,16 +1,20 @@
 # Herdr operations
 
-`scripts/panes.py` owns the layout: every change to the crew's panes goes
-through it, and a fresh session restarts in place, so the layout holds. Agents
-are named from your tab ID, lowercased with `:` turned to `-`: tab `wF:t1` gives
-`driver-wf-t1`, `oracle-wf-t1`, `builder-wf-t1`. Target every other command by
-pane ID.
+`scripts/panes.py` owns each crew's layout: every change to the crew's panes
+goes through it, and a fresh session restarts in place, so the layout holds.
+`scripts/crews.py` owns the crews themselves: the steward starts each in its own
+worktree and Herdr workspace, and stops it. Agents are named from their tab ID,
+lowercased with `:` turned to `-`: tab `wF:t1` gives `driver-wf-t1`,
+`oracle-wf-t1`, `builder-wf-t1`, and the steward's tab gives `steward-<tab>`.
+Address the steward by that name, since a replacement steward takes it over;
+target every other command by pane ID.
 
 - `panes.py setup`: creates whatever is missing and prints the three pane IDs.
 - `panes.py check`: `layout_ok`, or the problems. Run it after anything odd.
 - `panes.py restart oracle|builder`: stops the pane's Claude session and starts
   a fresh one in the same pane, with your own launch arguments (permission mode)
   plus the role's model, effort and denied tools (`ROLE_ARGS` in `panes.py`).
+- `panes.py args driver|steward`: the arguments for a replacement session.
 
 ## Sending a prompt
 

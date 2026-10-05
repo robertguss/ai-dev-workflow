@@ -1,25 +1,47 @@
 # ai-dev-workflow
 
-Agent skills for building software with a crew of three Claude Code sessions: an
-Opus **driver** that leads, a Sonnet **builder** that builds, and a Fable
-**oracle** that reviews the steps that matter. Every change goes through a
-reviewed plan and a reviewed diff before it is committed, and the work queue
-lives in [Linear](https://linear.app), where you decide what gets built.
+Agent skills for building software with crews of Claude Code sessions, built to
+need you as little as possible. You give intent; an Opus **steward** turns it
+into [Linear](https://linear.app) issues, releases them, and starts **crews** to
+build them in parallel. Each crew is an Opus **driver** that leads, a Sonnet
+**builder** that builds, and a Fable **oracle** that reviews the steps that
+matter. Every change goes through a reviewed plan and a reviewed diff before it
+lands.
 
-The sessions run side by side in one [Herdr](https://herdr.dev) tab (Herdr is a
-terminal multiplexer for coding agents) and talk to each other through it. Fable
-is the costliest model in the loop, so [Jev](https://typesafe.ai), a fast
-classifier model, decides which steps it reviews and when each session should
-restart fresh.
+The sessions run in [Herdr](https://herdr.dev) (a terminal multiplexer for
+coding agents) and talk to each other through it. Fable is the costliest model
+in the loop, so [Jev](https://typesafe.ai), a fast classifier model, decides
+which steps it reviews, which issues and questions need you, and when each
+session should restart fresh.
 
-| Skill                                                  | What it does                                                                          |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| [`crew`](skills/crew/SKILL.md)                         | The whole loop: lays out the three panes, plans, builds, reviews, commits, hands off. |
-| [`linear-migration`](skills/linear-migration/SKILL.md) | Moves a repository's existing plan (ROADMAP, PLAN, HANDOFF, audit) into Linear.       |
+| Skill                                                  | What it does                                                                        |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| [`crew`](skills/crew/SKILL.md)                         | The whole loop: keeps the board, runs crews that plan, build, review and land work. |
+| [`linear-migration`](skills/linear-migration/SKILL.md) | Moves a repository's existing plan (ROADMAP, PLAN, HANDOFF, audit) into Linear.     |
 
 ## How it works
 
-### The three roles
+### The steward and its crews
+
+Run `/crew` once in a repository. That session becomes the **steward**, in your
+own checkout, which it never changes. Each pass, it:
+
+- turns your intent (a rough Linear issue, or a line to it in chat) into an
+  issue with a goal, observable acceptance criteria and a **footprint**: the
+  files it will change;
+- sets priority from the goals in the Linear project's description, links
+  dependencies and closes duplicates;
+- releases each shaped issue to `Ready`, unless Jev rates it high-stakes, in
+  which case you get one question with a recommendation;
+- works out which `Ready` issues can be built side by side (no overlapping
+  footprints, no shared spine like lockfiles or migrations) and starts up to
+  `Crews:` crews, each in its own git worktree and Herdr workspace.
+
+Crews claim issues from the shared queue and retire themselves when nothing they
+can take remains. Drivers bring the steward their questions about scope and
+acceptance; it answers them, and only high-stakes ones reach you.
+
+### The three roles in a crew
 
 ```text
 ┌────────────────────────┬────────────────────────┐
@@ -28,16 +50,17 @@ restart fresh.
 │ picks work, plans,     │ briefs and diffs;      │
 │ briefs, reviews the    │ never edits            │
 │ routine steps,         ├────────────────────────┤
-│ commits; the only      │ builder (Sonnet)       │
-│ agent that writes to   │ builds one step from   │
-│ Linear                 │ the brief, test-first  │
+│ commits and lands      │ builder (Sonnet)       │
+│ its claimed issue      │ builds one step from   │
+│                        │ the brief, test-first  │
 └────────────────────────┴────────────────────────┘
 ```
 
-- **Driver** (left half, Opus): the tech lead. It takes the next released issue,
-  splits multi-step issues into sub-issues, writes each step's **brief**,
-  reviews the routine steps itself, triages findings, and commits. It writes no
-  code itself.
+- **Driver** (left half, Opus): the tech lead. It claims the next issue it can
+  build beside the other crews, splits multi-step issues into sub-issues, writes
+  each step's **brief**, reviews the routine steps itself, triages findings,
+  commits and lands. It writes no code itself. When it disputes an oracle
+  finding, it argues once with evidence and the oracle's answer stands.
 - **Oracle** (top right, Fable): an independent reviewer for the steps Jev flags
   as high-stakes. It reads the repository, proves findings with throwaway
   reproductions outside it, and replies with a verdict and findings ranked P1 to
@@ -47,11 +70,11 @@ restart fresh.
   before each commit the driver reruns the brief's verify commands once, reading
   only exit codes and summary lines, to check the builder's report.
 
-The layout is fixed: `/crew` builds it, and restarts happen in place.
+The layout is fixed: each driver builds it, and restarts happen in place.
 
 ### Where Jev comes in
 
-Two cheap decisions, made in well under a second each:
+Cheap decisions, made in well under a second each:
 
 - **Who reviews?** Before each plan review and each diff review, Jev scores the
   brief for security, data loss, concurrency, money, contract and architecture
@@ -60,15 +83,21 @@ Two cheap decisions, made in well under a second each:
   driver reviews against the oracle's own checklist. An `oracle` label on an
   issue, or your request, always sends it to the oracle. About one routine step
   in ten goes to the oracle anyway as a spot check.
-- **Fresh session?** At the start of each step, before plan review, Jev weighs each session's context
-  size, whether its recent output looks stuck, and whether the next step is
-  related to its recent work, and restarts the builder, oracle or driver when a
-  fresh one would do better.
+- **Release, or ask you?** The steward asks Jev whether each shaped issue is
+  clear enough to build and whether it is high-stakes (the same risk questions
+  as the review gate, with more cautious cutoffs), and whether a driver's
+  question needs you or can be settled by the steward. It also asks whether two
+  issues are duplicates.
+- **Fresh session?** At the start of each step, before plan review, Jev weighs
+  each session's context size, whether its recent output looks stuck, and
+  whether the next step is related to its recent work, and restarts the builder,
+  oracle or driver when a fresh one would do better; the steward checks itself
+  after each pass.
 
 Every decision is logged next to what followed (review findings, cost per role,
-overrides, your feedback, bugs found later), so the cutoffs can be tuned from
-evidence. `crewlog.py report` summarizes it; `crewlog.py replay` re-runs past
-decisions with other cutoffs.
+overrides, disputes, chunk lengths, your feedback, bugs found later), so the
+cutoffs can be tuned from evidence. `crewlog.py report` summarizes it;
+`crewlog.py replay` re-runs past decisions with other cutoffs.
 
 ### One step, end to end
 
@@ -76,7 +105,7 @@ A **step** is one reviewed commit.
 
 ```mermaid
 flowchart TD
-    A[Pull the next Ready issue] --> B[Driver writes the brief]
+    A[Claim the next Ready issue that fits beside the other crews] --> B[Driver writes the brief]
     B --> R[Jev: restart the builder or oracle fresh?]
     R --> J1{Jev: who reviews the plan?}
     J1 -- high-stakes --> C{Oracle: plan review}
@@ -92,10 +121,11 @@ flowchart TD
     F -- P1/P2 --> G[Driver triages; builder fixes]
     F2 -- P1/P2 --> G
     G --> E
-    F -- sign-off --> V[Driver reruns the verify commands]
-    F2 -- sign-off --> V
+    F -- sign-off --> L[Commit, rebase onto the land branch]
+    F2 -- sign-off --> L
+    L --> V[Driver reruns the verify commands]
     V -- fails or contradicts the report --> G
-    V -- green, matches the report --> H[Commit, comment on the issue, Done]
+    V -- green --> H[Push to the land branch, comment on the issue, Done]
     H --> A
 ```
 
@@ -120,33 +150,52 @@ Stop and report if: conditions where the builder asks instead of choosing.
 
 ### Chunks and handoffs
 
-A **chunk** is one driver session. When Jev says a fresh driver is due, the
-queue is empty, or you ask, the driver ends the chunk at a step boundary: it
-writes `HANDOFF.md`, has it reviewed and commits it, restarts the oracle and
-builder fresh, starts a new driver, and hands over once the new one is `READY`.
+A **chunk** is one driver session. When Jev says a fresh driver is due, or you
+ask, the driver ends the chunk at a step boundary: it writes the crew's handoff,
+has it reviewed, restarts the oracle and builder fresh, starts a new driver, and
+hands over once the new one is `READY`. When no issue it can take remains, the
+crew retires instead, and the steward closes its worktree.
+
+## Landing work
+
+Set per repository, in `CLAUDE.md`:
+
+- **`Land: crew -> main`** (the default, for anything in production): crews land
+  on a shared `crew` branch, so nothing deploys. The steward keeps one release
+  PR from `crew` to `main` open, listing every issue it holds and flagging the
+  high-stakes ones. **You deploy by merging it**, with a merge commit so the two
+  branches stay aligned. Your CI runs on it too. A hotfix pushed to `main` is
+  merged back into `crew` on the steward's next pass.
+- **`Land: main`** (projects not yet in production): crews rebase, verify and
+  push straight to `main`.
+
+Each crew rebases onto the land branch, reruns the verify commands and pushes; a
+push that loses a race to another crew simply rebases and verifies again.
 
 ## Linear as the queue
 
-One Linear project per repository. You own priority, order, scope and what is
-released; the driver owns every status after `Ready`.
+One Linear project per repository. You give intent and answer what only you can;
+the steward shapes, prioritizes and releases; each driver owns the statuses of
+the issue it claimed.
 
-| Status        | Meaning                                  | Set by                                                                                    |
-| ------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `Backlog`     | Ideas and discovered work; not buildable | you; the driver for work it discovers                                                     |
-| `Ready`       | Released for building                    | you; the driver for sub-issues of a released parent and for answered `Needs Input` issues |
-| `Planning`    | Brief in plan review                     | driver                                                                                    |
-| `Building`    | Builder building or fixing               | driver                                                                                    |
-| `In Review`   | Diff in review                           | driver                                                                                    |
-| `Needs Input` | Waiting on you                           | driver                                                                                    |
-| `Done`        | Committed                                | driver                                                                                    |
+| Status        | Meaning                                  | Set by                                                      |
+| ------------- | ---------------------------------------- | ----------------------------------------------------------- |
+| `Backlog`     | Intent and discovered work, being shaped | you, the steward; the driver for work it discovers          |
+| `Ready`       | Released for building                    | the steward; the driver for sub-issues of a released parent |
+| `Planning`    | Brief in plan review                     | driver                                                      |
+| `Building`    | Builder building or fixing               | driver                                                      |
+| `In Review`   | Diff in review                           | driver                                                      |
+| `Needs Input` | Waiting on you                           | steward                                                     |
+| `Done`        | Landed on the land branch                | driver                                                      |
 
-- **The Ready gate.** Agents build only what you moved to `Ready`. Work the
-  driver discovers mid-step goes to `Backlog` with a note, for you to release.
-- **Questions.** When only you can decide, the driver comments on the issue
-  (question, options, recommendation, what it blocks) and sets `Needs Input`.
-- **`[driver]` prefix.** Linear shows the driver's comments under your account,
-  so every comment it posts starts with `[driver]`. An unprefixed comment is
-  yours.
+- **The Ready gate.** The steward releases routine work itself. Jev sends
+  anything high-stakes (security, data loss, money, a public contract,
+  architecture) to you instead.
+- **Questions.** When only you can decide, the steward comments on the issue
+  (the decision, why it is high-stakes, options, recommendation, what it blocks)
+  and sets `Needs Input`. Answer with a plain comment.
+- **Author prefixes.** Linear shows agent comments under your account, so each
+  starts with `[steward]` or `[driver crew-N]`. A comment without one is yours.
 
 ## Setup
 
@@ -158,9 +207,10 @@ released; the driver owns every status after `Ready`.
   [fnox](https://github.com/jdx/fnox) (project config, or
   `~/.config/fnox/config.toml`).
 - [`uv`](https://docs.astral.sh/uv/) (it runs `jev.py` and installs its one
-  dependency), Python 3, and `git`.
+  dependency), Python 3, `git`, and for `Land: crew -> main` the GitHub CLI
+  (`gh`).
 - For the Linear queue: a Linear workspace, and the Linear MCP server or a
-  Linear API key for the driver.
+  Linear API key for the steward and drivers.
 
 ### Install the skills
 
@@ -176,7 +226,7 @@ done
 
 Make these statuses exist with these exact names: `Backlog`, `Ready`
 (Unstarted), `Planning`, `Building`, `In Review`, `Needs Input` (all Started),
-`Done`. The driver checks for them and names any that are missing.
+`Done`. The steward checks for them and names any that are missing.
 
 ### Opt a repository in
 
@@ -186,23 +236,29 @@ Add a `## Crew` section to the repository's root `CLAUDE.md`:
 ## Crew
 
 Linear: team <KEY>, project <name>
+Land: crew -> main
+Crews: 2
+Shared: <globs every crew must take turns on, beyond the built-in lockfiles, migrations and CI>
 ```
 
-Leave out `Linear:` to run from `HANDOFF.md` alone.
+`Land` defaults to `crew -> main` and `Crews` to 2; `Shared` is optional. Write
+the project's goals in the Linear project's description: the steward prioritizes
+against them. Leave out `Linear:` to run a single crew from `HANDOFF.md` alone.
 
 ## Day to day
 
 1. Open a Herdr tab in the repository and start Claude Code with
    `claude --model opus --effort high`.
-2. Run `/crew`. It builds the layout, starting the oracle and builder with your
-   permission mode, reads `CLAUDE.md` and `HANDOFF.md`, and checks the checkout.
-3. Write issues in Linear and move the ones you want built to `Ready`. The
-   driver works through them, reporting each review decision and status change
-   in a line.
-4. Answer `Needs Input` questions in Linear or in the driver's pane. Outward
-   actions (push, merge, deploy) stay yours to authorize, per the project's own
-   rules.
-5. Ask the driver how the crew is doing to get `crewlog.py report`.
+2. Run `/crew`. That session becomes the steward: it checks the board, shapes
+   and releases what is there, starts crews, each with your permission mode, and
+   keeps running a pass every ten minutes so your changes in Linear are picked
+   up.
+3. Give it intent: write rough issues in Linear, or tell the steward in its
+   pane. It reports each pass in a few lines.
+4. Answer the `Needs Input` questions it sends you, in Linear or in its pane.
+5. For `Land: crew -> main`, merge the release PR whenever you want a deploy.
+6. Ask the steward or a driver how the crews are doing to get
+   `crewlog.py report`.
 
 ## Moving an existing plan into Linear
 
@@ -224,16 +280,19 @@ control; this repository's `.gitignore` already does.
 skills/
   crew/
     SKILL.md          the layout, and which file each role follows
-    driver.md         the loop, the brief, review requests, logging
+    steward.md        shaping, releasing, questions, dispatching crews
+    driver.md         the loop, the brief, landing, review requests, logging
     builder.md        build, stop-and-ask, fix rounds, report format
     oracle.md         review phases, severity, reply format
     jev.md            the gate and fresh-session decisions, spot checks, tuning
     linear.md         statuses, queue order, splitting, comments, escalation
     herdr-ops.md      the layout, prompting and reading panes
-    end-of-chunk.md   HANDOFF.md, its review, restarting the crew
+    end-of-chunk.md   retiring a crew, or the handoff and a replacement driver
     scripts/
-      panes.py        builds, checks and restarts the three-pane layout
-      jev.py          Jev's review gate and fresh-session check
+      panes.py        builds, checks and restarts a crew's three-pane layout
+      crews.py        starts, lists and stops crews in their own worktrees
+      parallel.py     which Ready issues can be built beside the work in flight
+      jev.py          Jev's review gate, release, escalation, duplicate and fresh-session checks
       verify.py       reruns the verify commands before commit, printing only exit codes and tails
       crewlog.py      the evaluation log, report and threshold replay
   linear-migration/
@@ -245,8 +304,9 @@ skills/
 ## Status
 
 A young workflow. The crew replaced the earlier driver, oracle and worker skills
-in October 2026, and Jev's cutoffs are first guesses waiting on the log. Expect
-the skills to change as it is tuned. Issues and pull requests are welcome.
+in October 2026 and gained the steward and parallel crews soon after; Jev's
+cutoffs are first guesses waiting on the log. Expect the skills to change as it
+is tuned. Issues and pull requests are welcome.
 
 ## License
 

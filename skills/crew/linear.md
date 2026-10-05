@@ -1,32 +1,38 @@
 # Linear
 
 The project's `CLAUDE.md` names the Linear team and project; reach them through
-the Linear MCP tools. You are the only agent that writes to Linear. The oracle
-and builder work from the repository and your prompts.
+the Linear MCP tools. The steward and the drivers write to Linear; the oracle
+and builder work from the repository and their prompts.
 
 ## Ownership
 
-The user owns priority, order, what is released to `Ready`, scope and acceptance
-criteria. You own every status change after `Ready`, the comments, and
-sub-issues. To suggest a priority or scope change, comment and tell the user;
-the change itself is theirs.
+The user wants to be involved as little as possible:
+
+- **The user** gives intent (rough issues, or messages to the steward), answers
+  `Needs Input` questions, and merges the release PR.
+- **The steward** shapes issues, sets priority, scope and acceptance, finds
+  dependencies and duplicates, releases issues to `Ready`, and answers drivers'
+  questions that Jev does not send to the user.
+- **A driver** owns the issue it claimed: its statuses from `Planning` to
+  `Done`, its comments and its sub-issues.
 
 ## Statuses
 
-| Status        | Meaning                                  | Set by                                                                          |
-| ------------- | ---------------------------------------- | ------------------------------------------------------------------------------- |
-| `Backlog`     | Ideas and discovered work; not buildable | user; driver for discovered work                                                |
-| `Ready`       | Released for building                    | user; driver for sub-issues of a released parent and for answered parked issues |
-| `Planning`    | Brief in plan review                     | driver                                                                          |
-| `Building`    | Builder building or fixing               | driver                                                                          |
-| `In Review`   | Diff in review (oracle or driver)        | driver                                                                          |
-| `Needs Input` | Waiting on the user                      | driver                                                                          |
-| `Done`        | Committed                                | driver                                                                          |
+| Status        | Meaning                                  | Set by                                              |
+| ------------- | ---------------------------------------- | --------------------------------------------------- |
+| `Backlog`     | Intent and discovered work, being shaped | user, steward; driver for discovered work           |
+| `Ready`       | Released for building                    | steward; driver for sub-issues of a released parent |
+| `Planning`    | Brief in plan review                     | driver                                              |
+| `Building`    | Builder building or fixing               | driver                                              |
+| `In Review`   | Diff in review (oracle or driver)        | driver                                              |
+| `Needs Input` | Waiting on the user                      | steward                                             |
+| `Done`        | Landed on the land branch                | driver                                              |
 
 A split parent moves to `Building` when its first sub-issue starts and to `Done`
 when its last sub-issue is done.
 
-Add the label `oracle` to an issue to force an oracle review whatever Jev says.
+The label `oracle` on an issue forces an oracle review whatever Jev says. The
+label `crew-N` marks the crew holding an issue.
 
 If any of these statuses is missing from the team, tell the user which ones to
 add and stop. Linear categories: `Ready` is Unstarted; `Planning`, `Building`,
@@ -36,63 +42,77 @@ add and stop. Linear categories: `Ready` is Unstarted; `Planning`, `Building`,
 
 At each step boundary:
 
-1. **Parked issues.** For each issue in `Needs Input`, look for a comment without
-   the `[driver]` prefix newer than your question. Answered: move it to
-   `Ready`; the answer is now part of its spec.
-2. **Candidates.** `Ready` issues in the project, including sub-issues. Skip any
-   blocked by an unfinished issue.
-3. **Order.** Priority: Urgent, High, Medium, Low, then none. Ties go to an
+1. **Candidates.** `Ready` issues in the project, including sub-issues, that no
+   crew holds.
+2. **Order.** Priority: Urgent, High, Medium, Low, then none. Ties go to an
    issue you already started (a split parent's next sub-issue), then to the
-   oldest. The user's latest priorities win over finishing started work: every
+   oldest. The latest priorities win over finishing started work: every
    committed step stands on its own.
-4. **Re-read** the chosen issue's description and comments; they may have
+3. **Fit.** Write the input for `scripts/parallel.py`: every issue a crew holds
+   (a `crew-N` label, not `Done`, in any status, `Needs Input` included) as
+   `active`, leaving out split parents, whose sub-issues stand for them; the
+   candidates in order as `ready`; each with the paths under its `Footprint:`
+   and its unfinished blockers. Run
+   `parallel.py --input <file> --shared "<Shared globs>"` and take the first
+   `compatible` issue.
+4. **Claim** it: set `Planning` and add your crew's label (creating the label if
+   missing). Re-read the issue and run `parallel.py` again, with it as the only
+   `ready` entry and every other active issue as `active`. Another crew's label
+   on it too: the lower crew number keeps it. A conflict with another crew's
+   claim made meanwhile: the lower crew number keeps its issue, and the higher
+   releases its own back to `Ready` without its label. Either way, if you let it
+   go, pull again.
+5. **Re-read** the claimed issue's description and comments; they may have
    changed since you last saw them.
 
-Done when you hold one issue to plan, or the queue is empty.
+Done when you hold one claimed issue to plan, or no candidate is compatible.
+
+Without Linear there is one crew: take the next item from the user's
+instructions or `HANDOFF.md`.
 
 ## Splitting
 
 Once plan review agrees a split, create one sub-issue per step under the parent,
-in `Ready`, with the parent's priority. Number the titles in build order
-(`1/3 …`) and, where the tools allow, make each sub-issue blocked by the one
-before it. The current step continues as the first sub-issue.
+in `Ready`, with the parent's priority and a `Footprint:` for its step (the
+issue template is in [steward.md](steward.md#the-issue-template)). Number the
+titles in build order (`1/3 …`) and, where the tools allow, make each sub-issue
+blocked by the one before it. The current step continues as the first sub-issue.
 
 ## Comments
 
 Post on the step's issue (the sub-issue, or the issue itself when it has one
 step). Write each so the user can read it without the chat.
 
-Linear shows your comments under the user's own account, so start every comment
-you post with `[driver]`. A comment without that prefix is the user's.
+Linear shows every agent comment under the user's own account, so each starts
+with its author: `[steward]` or `[driver crew-N]`. A comment without a bracketed
+author is the user's.
 
 - **At `Building`:** the approved brief, headed `Brief (oracle-approved)` or
   `Brief (driver-reviewed; Jev: <why>)`.
-- **At `Done`:** the commit SHA, who reviewed (oracle or driver) with Jev's
-  reason, the verdict and number of review rounds, each finding with its disposition (fixed, or escalated and the
-  outcome), and the verify results.
-- **At `Needs Input`:** the question, below.
+- **At `Done`:** the landed commit SHA and branch, who reviewed (oracle or
+  driver) with Jev's reason, the verdict and number of review rounds, each
+  finding with its disposition (fixed, withdrawn on dispute, or filed as
+  discovered work), and the verify results.
 
 ## Discovered work
 
 Work found mid-step that lies outside the step's scope becomes a new issue in
 `Backlog`: what you found, where (`file:line`), and why it matters, related to
-the current issue. It waits for the user to release it. Mention it to the user
-in a line.
+the current issue. The steward shapes and releases it on its next pass.
 
 ## Escalation
 
-When only the user can decide (a disputed finding, an unclear acceptance
-criterion, a scope question):
+Only high-stakes decisions reach the user; Jev decides which (jev.md).
 
-1. Comment on the issue: the question, the options with your recommendation, and
-   what it blocks. Set `Needs Input`, and tell the user in your pane in a line or
-   two.
-2. Then act by stage:
-   - **Planning** (nothing built yet): park it. Return to the queue and take the
-     next issue; pulling picks up the answer.
-   - **Building or review** (uncommitted work in the tree): wait. The user
-     answers in Linear or in your pane. If your harness can wake you, check the
-     issue for a reply every five minutes; otherwise end your turn, saying where
-     to answer. Once answered, restore the earlier status and continue.
+- **A disputed oracle finding** is settled with the oracle (driver.md, triage).
+- **A fix outside the step's scope** becomes discovered work.
+- **An unclear acceptance criterion or a scope question** goes to the steward
+  (driver.md, talking to the steward). It answers, or posts the question for the
+  user and sets `Needs Input`. Then act by stage:
+  - **Planning** (nothing built yet): remove your crew's label, leave the issue
+    to the steward, and pull the next one.
+  - **Building or review** (uncommitted work in the tree): keep your label and
+    end your turn. The steward sends you the user's answer once they give it;
+    restore the earlier status and continue.
 
-Without Linear, ask in your pane and wait, at either stage.
+Without Linear, ask the user in your pane and wait, at either stage.

@@ -4,15 +4,15 @@ description:
   "Migrate a repository's planning (a ROADMAP, PLAN, HANDOFF queue or audit doc)
   into a Linear project for the crew loop: issues quoting their sources,
   statuses per the crew skill, an oracle review, then the message that switches
-  the driver over. Use when the user asks to migrate, move or
-  import a repo or project to Linear."
+  the driver over. Use when the user asks to migrate, move or import a repo or
+  project to Linear."
 ---
 
 # Linear migration
 
 You move one repository's open work into a new Linear project so its **driver**
-(the `crew` skill's driver) can pull from it. Nothing in the repository changes: the
-migration ends with a **switch-over issue** that the driver itself builds
+(the `crew` skill's driver) can pull from it. Nothing in the repository changes:
+the migration ends with a **switch-over issue** that the driver itself builds
 through its reviewed loop.
 
 Read the crew skill's `linear.md` first: its statuses, ownership rules and the
@@ -66,8 +66,8 @@ IDs with read-only GraphQL queries, and ask the user for the rest. It holds:
 3. **Settle what only the user can decide**, one question per message, with a
    recommendation: how far to move (usually a **full move**: the old plan frozen
    as history, binding rules kept), and, when a chunk is in flight, whether to
-   migrate now or after it. Derive everything else from the sources and the
-   crew skill.
+   migrate now or after it. Derive everything else from the sources and the crew
+   skill.
 4. **Write the script** (`--dry` prints the plan; the real run refuses if the
    project exists and writes the id map). Then dry-run and check: every cited
    range printed and read against its source, with no quote starting or ending
@@ -78,36 +78,42 @@ IDs with read-only GraphQL queries, and ask the user for the rest. It holds:
    and digits only, after the auto-link normalisation below). Done at zero
    mismatches.
 6. **Oracle review.** Send a self-contained prompt to an oracle (the crew's
-   oracle pane, or any reviewing agent told `Use the crew skill. Your role:
-   oracle.`; ask the user which pane if unsure): phase
-   `diff`, read-only access rules, the script, id map and sources, the choices
-   to judge, and anything you got wrong and fixed. Triage as the crew's driver
-   does; fix, re-verify, `re-review` until sign-off; apply P3s without another
-   round. Anything you change after sign-off (the hand-over message, the log)
-   goes back for review too. Done at sign-off.
+   oracle pane, or any reviewing agent told
+   `Use the crew skill. Your role: oracle.`; ask the user which pane if unsure):
+   phase `diff`, read-only access rules, the script, id map and sources, the
+   choices to judge, and anything you got wrong and fixed. Triage as the crew's
+   driver does; fix, re-verify, `re-review` until sign-off; apply P3s without
+   another round. Anything you change after sign-off (the hand-over message, the
+   log) goes back for review too. Done at sign-off.
 7. **Hand over.** Add a row to the migrations log, if the user keeps one. Give
-   the user the message for the driver's pane (re-read `linear.md`, take the
-   switch-over issue first, plus anything in flight), and anything they must do
-   in Linear, under a "What I need from you" heading.
+   the user the message for the running driver's pane (re-read `linear.md`, take
+   the switch-over issue first, plus anything in flight), or, with no crew
+   running, the message that starts the steward before `CLAUDE.md` names Linear:
+   `/crew Your role: steward. Linear: team <KEY>, project <name>.` The
+   switch-over issue then adds the `## Crew` section for good. Add anything they
+   must do in Linear, under a "What I need from you" heading.
 
 ## Statuses and relations
 
-- **Backlog** is the default: the user releases work by moving it to Ready.
+- **Backlog** is the default: the crew's steward shapes migrated work and
+  releases it to Ready on its next pass.
 - **The switch-over issue** ("Move planning from <source> to Linear") is Ready
   at High priority, or Needs Input with a `[driver]` "resume" question when the
-  user has told the driver to hold. Its acceptance: a `## Crew` section in
-  the root `CLAUDE.md` (`Linear: team <KEY>, project <name>`); the old plan frozen with a banner; binding rules
-  kept, with every pointer to them (including code comments) moved if they move;
-  every statement naming the old plan as the queue or authority reconciled (grep
-  for it, inside the handoff too); the handoff's chunk contract (stopping point,
-  required checks) preserved; the user's chat-only answers recorded. Out of
-  scope: changing any rule's meaning, app code.
+  user has told the driver to hold. Its acceptance: a `## Crew` section in the
+  root `CLAUDE.md` (`Linear: team <KEY>, project <name>`); the old plan frozen
+  with a banner; binding rules kept, with every pointer to them (including code
+  comments) moved if they move; every statement naming the old plan as the queue
+  or authority reconciled (grep for it, inside the handoff too); the handoff's
+  chunk contract (stopping point, required checks) preserved; the user's
+  chat-only answers recorded. Out of scope: changing any rule's meaning, app
+  code.
 - **Work in flight** mirrors reality: the chunk's parent Building once a step
   has started, finished steps Done (with the commit), a step waiting on the user
   in Needs Input. A signed-off but unbuilt step is Ready, with its brief on the
   issue. The switch-over blocks the next in-flight step whenever that step's
   plan edits the old planning file.
-- **Ready only what the user released.** Agreeing an order is not a release
+- **Ready only what the user already released**, such as signed-off steps;
+  everything else waits for the steward. Agreeing an order is not a release
   while they have said hold. Enforce an agreed order with sequential `blocks`
   relations, not creation order.
 - **Every Needs Input issue gets a dated `[driver]` question comment**: the

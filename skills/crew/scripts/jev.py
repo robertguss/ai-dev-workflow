@@ -7,8 +7,14 @@
 
   jev.py gate  --issue ID --phase plan|diff --brief FILE [--report FILE] [--previous-report FILE] [--files "a b"]
       Does this step need the (costly) Fable oracle, or can the driver review it itself?
-  jev.py fresh --issue ID --role builder|oracle|driver --pane PANE [--next FILE]
+  jev.py fresh --issue ID --role builder|oracle|driver|steward --pane PANE [--next FILE]
       Should this pane's Claude session be restarted fresh before the next step?
+  jev.py ready --issue ID --text FILE
+      Steward: release this shaped issue to Ready, rewrite it, or ask the user?
+  jev.py escalate --issue ID --text FILE --question FILE
+      Steward: may it answer this driver's question itself, or must the user?
+  jev.py duplicate --issue ID --other ID --text FILE --other-text FILE
+      Steward: do these two issues ask for the same change?
 
 Jev answers the fuzzy questions; the thresholds below decide. Every decision is
 logged by crewlog.py with an `id`; log the review that follows with `--decision <id>`.
@@ -36,6 +42,12 @@ FNOX_GLOBAL = Path.home() / ".config/fnox/config.toml"
 # gate: any risk flag at or above FLAG_AT, or stakes at or above STAKES_AT, sends the step to Fable.
 FLAG_AT = 0.7
 STAKES_AT = 1.5
+# ready and escalate: the user decides anything at or above these, so they start cautious.
+ASK_FLAG_AT = 0.5
+ASK_STAKES_AT = 1.2
+# ready: below this an issue is too unclear to build and the steward rewrites it.
+CLEAR_AT = 0.6
+DUPLICATE_AT = 0.8
 # Spot checks: this share of steps judged routine still go to the oracle, so the log can
 # show what the gate misses. Set CREW_AUDIT_RATE=0 to turn off.
 AUDIT_RATE = float(os.environ.get("CREW_AUDIT_RATE", "0.1"))
@@ -45,17 +57,24 @@ CONTEXT = {
     "builder": {"soft": 60_000, "hard": 150_000},
     "oracle": {"soft": 60_000, "hard": 120_000},
     "driver": {"soft": 150_000, "hard": 250_000},
+    "steward": {"soft": 150_000, "hard": 250_000},
 }
 STRUGGLING_AT = 0.7
 RELATED_AT = 0.5
 
+# {subject} names what is judged: the step, an issue, or a decision a driver asks for.
 RISKS = {
-    "security": "Does the step in `step` change authentication, authorization, secrets, permissions, or who can see data?",
-    "data": "Can the step in `step` change or delete stored data in a way that is hard to undo, such as a migration, backfill, or deletion of records?",
-    "concurrency": "Does the step in `step` involve concurrency, locking, retries, caching, or consistency between services?",
-    "money": "Does the step in `step` affect payments, refunds, billing, or charges?",
-    "contract": "Does the step in `step` change a public API, schema, or contract that other systems or clients depend on?",
-    "architecture": "Is the step in `step` a long-lived design decision that is expensive to reverse later?",
+    "security": "Does {subject} change authentication, authorization, secrets, permissions, or who can see data?",
+    "data": "Can {subject} change or delete stored data in a way that is hard to undo, such as a migration, backfill, or deletion of records?",
+    "concurrency": "Does {subject} involve concurrency, locking, retries, caching, or consistency between services?",
+    "money": "Does {subject} affect payments, refunds, billing, or charges?",
+    "contract": "Does {subject} change a public API, schema, or contract that other systems or clients depend on?",
+    "architecture": "Is {subject} a long-lived design decision that is expensive to reverse later?",
+}
+SUBJECTS = {
+    "gate": "the step in `step`",
+    "ready": "the work in `issue`",
+    "escalate": "the decision asked in `question`, for the work in `issue`,",
 }
 STAKES_LEVELS = [
     "Cosmetic or obvious at once, and trivial to revert",
@@ -91,14 +110,25 @@ def read(path: str | None, limit: int = 12_000) -> str:
 # ---------- gate ----------
 
 
-def gate_questions(has_report: bool) -> dict:
+def risk_questions(command: str) -> dict:
     from typesafe_sdk import Noul, Score
 
+    subject = SUBJECTS[command]
     questions = {"stakes": Score(
-        instructions="If the step in `step` ships with a subtle mistake, how bad is the damage?",
+        instructions=f"If {subject} ships with a subtle mistake, how bad is the damage?",
         criteria=STAKES_LEVELS,
     )}
-    questions |= {name: Noul(instructions=text) for name, text in RISKS.items()}
+    return questions | {name: Noul(instructions=text.format(subject=subject)) for name, text in RISKS.items()}
+
+
+def risks_of(response) -> tuple[float, dict[str, float]]:
+    return response.scores["stakes"].score, {name: response.nouls[name].noul for name in RISKS}
+
+
+def gate_questions(has_report: bool) -> dict:
+    from typesafe_sdk import Noul
+
+    questions = risk_questions("gate")
     if has_report:
         questions["stuck"] = Noul(
             instructions="Does `step.builder_report` describe the same failure as `step.previous_report`, "
@@ -133,6 +163,62 @@ def cmd_gate(args) -> dict:
         result |= {"send_to": "oracle", "audit": True, "why": f"spot check (would be self: {result['why']})"}
     first_line = step["brief"].strip().splitlines()[0] if step["brief"].strip() else ""
     return result | {"title": first_line[:120], "brief": step["brief"][:6_000]}
+
+
+# ---------- steward ----------
+
+
+def high_stakes(stakes: float, flags: dict[str, float]) -> list[str]:
+    """Why the user must decide, or [] when the steward may."""
+    reasons = []
+    if fired := sorted(name for name, p in flags.items() if p >= ASK_FLAG_AT):
+        reasons.append(f"risk flags: {', '.join(fired)}")
+    if stakes >= ASK_STAKES_AT:
+        reasons.append(f"stakes {stakes:.2f} >= {ASK_STAKES_AT}")
+    return reasons
+
+
+def decide_ready(stakes: float, flags: dict[str, float], clear: float) -> dict:
+    if clear < CLEAR_AT:
+        action, why = "rewrite", f"unclear ({clear:.2f} < {CLEAR_AT})"
+    elif reasons := high_stakes(stakes, flags):
+        action, why = "ask", "; ".join(reasons)
+    else:
+        action, why = "release", f"clear ({clear:.2f}), stakes {stakes:.2f}, no risk flags"
+    return {"action": action, "why": why, "stakes": round(stakes, 2), "clear": round(clear, 2),
+            "flags": {k: round(v, 2) for k, v in flags.items()}}
+
+
+def cmd_ready(args) -> dict:
+    from typesafe_sdk import Noul
+
+    text = read(args.text)
+    questions = risk_questions("ready") | {"clear": Noul(
+        instructions="Does `issue` say what to build and give observable acceptance criteria, so that two competent "
+        "engineers working only from it and the codebase would build the same thing?"
+    )}
+    response = ask({"issue": text}, questions)
+    stakes, flags = risks_of(response)
+    return decide_ready(stakes, flags, response.nouls["clear"].noul) | {"text": text[:6_000]}
+
+
+def cmd_escalate(args) -> dict:
+    issue, question = read(args.text), read(args.question)
+    response = ask({"issue": issue, "question": question}, risk_questions("escalate"))
+    stakes, flags = risks_of(response)
+    reasons = high_stakes(stakes, flags)
+    return {"to": "user" if reasons else "steward", "why": "; ".join(reasons) or f"stakes {stakes:.2f}, no risk flags",
+            "stakes": round(stakes, 2), "flags": {k: round(v, 2) for k, v in flags.items()}, "text": (issue + question)[:6_000]}
+
+
+def cmd_duplicate(args) -> dict:
+    from typesafe_sdk import Noul
+
+    response = ask({"a": read(args.text), "b": read(args.other_text)}, {"same": Noul(
+        instructions="Do `a` and `b` ask for the same change, so that building either one would make the other unnecessary?"
+    )})
+    p = response.nouls["same"].noul
+    return {"other": args.other, "duplicate": p >= DUPLICATE_AT, "p": round(p, 2)}
 
 
 # ---------- fresh ----------
@@ -218,14 +304,25 @@ def main() -> None:
     fresh.add_argument("--role", choices=list(CONTEXT), required=True)
     fresh.add_argument("--pane", required=True)
     fresh.add_argument("--next")
+    p = sub.add_parser("ready")
+    for flag in ("--issue", "--text"):
+        p.add_argument(flag, required=True)
+    p = sub.add_parser("escalate")
+    for flag in ("--issue", "--text", "--question"):
+        p.add_argument(flag, required=True)
+    p = sub.add_parser("duplicate")
+    for flag in ("--issue", "--other", "--text", "--other-text"):
+        p.add_argument(flag, required=True)
     args = parser.parse_args()
 
+    commands = {"gate": cmd_gate, "fresh": cmd_fresh, "ready": cmd_ready, "escalate": cmd_escalate, "duplicate": cmd_duplicate}
     start = time.perf_counter()
-    result = {"id": uuid.uuid4().hex[:8], "issue": args.issue}
-    result |= cmd_gate(args) if args.command == "gate" else cmd_fresh(args)
+    result = {"id": uuid.uuid4().hex[:8], "issue": args.issue, "command": args.command}
+    result |= commands[args.command](args)
     result["ms"] = round((time.perf_counter() - start) * 1000)
     crewlog.append("decision", **result)
     result.pop("brief", None)
+    result.pop("text", None)
     print(json.dumps(result))
 
 

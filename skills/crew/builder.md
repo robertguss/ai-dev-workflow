@@ -36,6 +36,11 @@ review finding.
 The driver sends review findings verbatim, with its decision on each. Fix each
 accepted finding within its bounds, rerun the verify commands, and report again.
 
+When another crew's work lands first, the driver may leave a rebase in progress
+and send you the conflicted files. Resolve each so both sides' intent holds,
+`git add` it, rerun the verify commands, and report; the driver continues the
+rebase.
+
 ## Report
 
 Reply with this report and nothing before it:
@@ -50,8 +55,8 @@ Deviations: departures from the brief and why, or "none"
 Questions: or "none"
 ```
 
-Keep what you ran separate from what you only assume. Give counts exactly as
-the runner printed them, from a run after your last edit: the driver reruns the
+Keep what you ran separate from what you only assume. Give counts exactly as the
+runner printed them, from a run after your last edit: the driver reruns the
 verify commands before commit and sends back any report they contradict. Keep
-the report under about 60 lines; if it must be longer, write it to a file and end with that
-file's path.
+the report under about 60 lines; if it must be longer, write it to a file and
+end with that file's path.

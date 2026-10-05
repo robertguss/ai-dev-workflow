@@ -10,6 +10,7 @@
   panes.py setup              create the oracle and builder panes if missing; print pane IDs
   panes.py check              verify the layout; exit 1 and list problems if it is wrong
   panes.py restart ROLE       fresh Claude session for oracle|builder in the same pane
+  panes.py args ROLE          the claude arguments for a new driver|steward|oracle|builder session
 
 Run from the driver's pane (it reads $HERDR_PANE_ID and $HERDR_TAB_ID). Prints JSON.
 """
@@ -31,6 +32,8 @@ UNUSED_TOOLS = ["--disallowedTools", "Artifact,Workflow,ScheduleWakeup,SendFeedb
 ROLE_ARGS = {
     "oracle": ["--model", "fable", "--effort", "high", *UNUSED_TOOLS],
     "builder": ["--model", "sonnet", "--effort", "medium", *UNUSED_TOOLS],
+    "driver": ["--model", "opus", "--effort", "high"],
+    "steward": ["--model", "opus", "--effort", "high"],
 }
 # Dropped from the driver's own launch command before reuse: they pick a model or resume old work.
 DROP_WITH_VALUE = {"--model", "--effort", "--resume", "-r", "--session-id", "--agent", "--advisor"}
@@ -72,7 +75,7 @@ def session(pane: str) -> dict | None:
 
 
 def launch_args(role: str) -> list[str]:
-    """The driver's own claude arguments (permission mode etc.) with the role's model and effort."""
+    """The caller's own claude arguments (permission mode etc.) with the role's model and effort."""
     proc = claude_proc(env("HERDR_PANE_ID"))
     kept, skip = [], False
     for arg in (proc["argv"][1:] if proc else []):
@@ -176,8 +179,10 @@ def main() -> None:
         result = setup()
     elif command == "check":
         result = check()
-    elif command == "restart" and len(sys.argv) > 2 and sys.argv[2] in ROLE_ARGS:
+    elif command == "restart" and len(sys.argv) > 2 and sys.argv[2] in ("oracle", "builder"):
         result = restart(sys.argv[2])
+    elif command == "args" and len(sys.argv) > 2 and sys.argv[2] in ROLE_ARGS:
+        result = {"args": launch_args(sys.argv[2])}
     else:
         sys.exit(__doc__)
     print(json.dumps(result))

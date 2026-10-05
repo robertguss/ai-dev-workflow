@@ -2,9 +2,10 @@
 """The crew's evaluation log: Jev's decisions next to what actually happened.
 
 Every record is one JSON line in ~/.local/state/crew/log.jsonl, tagged with the
-repository and issue. jev.py writes `decision` records, verify.py `verify`
-records and panes.py a `session` record for each session it restarts; the driver
-writes the rest:
+repository (the main checkout, shared by every crew's worktree) and issue. jev.py
+writes `decision` records, verify.py `verify` records, panes.py a `session` record
+for each session it restarts and crews.py a `crew` record for each crew it starts
+or stops; the driver writes the rest:
 
   crewlog.py step     --issue ID                      a step starts (usage is measured from here)
   crewlog.py review   --issue ID --phase P --reviewer oracle|driver --verdict sign-off|changes
@@ -14,6 +15,10 @@ writes the rest:
   crewlog.py override --issue ID --decision DID --by driver|user --to oracle|self|keep|fresh --why TEXT
   crewlog.py escape   --issue ID --commit SHA --why TEXT    a bug later traced to a crew commit
   crewlog.py mismatch --issue ID --why TEXT           verify.py disagreed with the builder's report
+  crewlog.py dispute  --issue ID --finding TITLE --outcome withdrawn|upheld
+                                                      the driver contested an oracle finding
+  crewlog.py chunk    --crew NAME --steps N --ending replace|retire
+                                                      a driver session ended
   crewlog.py feedback --issue ID --text TEXT          the user's own verdict on a decision or step
   crewlog.py report   [--days N] [--repo PATH]        how well the gate and fresh checks are doing
   crewlog.py replay   [--flag-at F] [--stakes-at S]   re-run past gate decisions with other thresholds (default: jev.py's)
@@ -37,6 +42,11 @@ PRICES = {"driver": (4.0, 20.0, 0.20), "builder": (2.0, 10.0, 0.20), "oracle": (
 
 
 def repo() -> str:
+    """The main checkout, also from inside a crew's worktree."""
+    out = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
+    common = Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
+    if common and common.name == ".git":
+        return str(common.parent)
     out = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     return out.stdout.strip() or os.getcwd()
 
@@ -182,6 +192,34 @@ def cmd_report(args) -> None:
     for reason, n in Counter(f["why"].split(" (")[0].split(":")[0] for f in freshes if f["fresh"]).most_common():
         print(f"    {n:>3}  {reason}")
 
+    print("\n== Steward ==")
+    ready = [d for d in decisions if d.get("command") == "ready"]
+    print(f"  {len(ready)} release checks: {dict(Counter(d['action'] for d in ready))}")
+    escalations = [d for d in decisions if d.get("command") == "escalate"]
+    print(f"  {len(escalations)} driver questions: {dict(Counter(d['to'] for d in escalations))}")
+    duplicates = [d for d in decisions if d.get("command") == "duplicate"]
+    print(f"  {len(duplicates)} duplicate checks, {sum(1 for d in duplicates if d['duplicate'])} judged duplicates")
+    disputes = [r for r in rs if r["kind"] == "dispute"]
+    print(f"  oracle findings disputed by a driver: {len(disputes)} {dict(Counter(r['outcome'] for r in disputes))}")
+
+    print("\n== Chunks ==")
+    chunks = [r for r in rs if r["kind"] == "chunk"]
+    if chunks:
+        steps = sorted(r["steps"] for r in chunks)
+        print(f"  {len(chunks)} chunks: {dict(Counter(r['ending'] for r in chunks))}; steps per chunk "
+              f"min {steps[0]}, median {steps[len(steps) // 2]}, max {steps[-1]}")
+    # The driver's fresh check at each step boundary logs its context as the next step begins.
+    start_tokens = {d["issue"]: d["tokens"] for d in freshes if d["role"] == "driver"}
+    buckets: dict[str, list[float]] = {}
+    for u in rs:
+        if u["kind"] == "usage" and u.get("counted") == "per-message" and u["issue"] in start_tokens and "driver" in u.get("roles", {}):
+            t = start_tokens[u["issue"]]
+            bucket = "under 100k" if t < 100_000 else "100k-200k" if t < 200_000 else "200k and over"
+            buckets.setdefault(bucket, []).append(u["roles"]["driver"]["usd"])
+    for bucket in ("under 100k", "100k-200k", "200k and over"):
+        if costs := buckets.get(bucket):
+            print(f"  driver cost per step starting at {bucket:<13}: ${sum(costs) / len(costs):.2f} ({len(costs)} steps)")
+
     print("\n== Builder reports ==")
     verifies = [r for r in rs if r["kind"] == "verify"]
     mismatches = [r for r in rs if r["kind"] == "mismatch"]
@@ -258,6 +296,14 @@ def main() -> None:
     p = sub.add_parser("escape")
     for flag in ("--issue", "--commit", "--why"):
         p.add_argument(flag, required=True)
+    p = sub.add_parser("dispute")
+    for flag in ("--issue", "--finding"):
+        p.add_argument(flag, required=True)
+    p.add_argument("--outcome", choices=["withdrawn", "upheld"], required=True)
+    p = sub.add_parser("chunk")
+    p.add_argument("--crew", required=True)
+    p.add_argument("--steps", type=int, required=True)
+    p.add_argument("--ending", choices=["replace", "retire"], required=True)
     p = sub.add_parser("mismatch")
     for flag in ("--issue", "--why"):
         p.add_argument(flag, required=True)
