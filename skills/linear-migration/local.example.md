@@ -6,9 +6,9 @@ out of version control. The skill reads it before anything else.
 ## Linear
 
 - Team: **<team name>**, key `<KEY>`, id `<team uuid>`.
-- Status ids (the crew's statuses; see the crew skill's `linear.md`):
-  Backlog `<id>`, Ready `<id>`, Planning `<id>`, Building `<id>`, In Review
-  `<id>`, Needs Input `<id>`, Done `<id>`.
+- State mapping: list the actual team's state names, types and stable UUIDs.
+  Preserve source meanings, including any distinct Todo/Ready states; do not
+  create or rename states to fit a development workflow.
 - API key: read it from
   `<where, e.g. "~/.zshrc, the line starting export LINEAR_API_KEY=">`.
 

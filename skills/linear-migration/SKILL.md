@@ -1,171 +1,101 @@
 ---
 name: linear-migration
 description:
-  "Migrate a repository's planning (a ROADMAP, PLAN, HANDOFF queue or audit doc)
-  into a Linear project for the crew loop: issues quoting their sources,
-  statuses per the crew skill, an oracle review, then the message that switches
-  the driver over. Use when the user asks to migrate, move or import a repo or
-  project to Linear."
+  "Migrate a repository's planning, open questions and binding rules into Linear
+  with source-backed issues, preserved workflow semantics and verified relations.
+  Use when the user asks to migrate, move or import a repo or project to Linear."
 ---
 
 # Linear migration
 
-You move one repository's open work into a new Linear project so its **driver**
-(the `crew` skill's driver) can pull from it. Nothing in the repository changes:
-the migration ends with a **switch-over issue** that the driver itself builds
-through its reviewed loop.
+Move the requested repository's open work into Linear. Preserve its current
+scope, approval gates, workflow states and source evidence. A migration does not
+authorize implementation or delivery of the imported work. It runs in the current
+session and does not depend on a separate development skill or terminal app.
 
-Read the crew skill's `linear.md` first: its statuses, ownership rules and the
-`[driver]` comment prefix are the contract every migrated issue must satisfy.
+## Workspace facts
 
-## Your workspace: local.md
+Read `local.md` beside this file when present; keep it out of version control.
+[local.example.md](local.example.md) describes optional workspace facts. Discover
+missing team, project and state IDs through available Linear tools. Do not invent
+a workflow or rename states to fit a generic process. Use stable UUIDs for writes
+and verification; human issue identifiers are display labels.
 
-The facts that differ per user live in `local.md` beside this file (keep it out
-of version control; `local.example.md` is the template). Read it before anything
-else. If it is missing, create it from the template: look up the team and status
-IDs with read-only GraphQL queries, and ask the user for the rest. It holds:
+Prefer connected Linear tools. [template.py](template.py) supports larger scripted
+imports, a dry run, saved creation IDs and verification. Use a direct API only
+when needed and authorized; obtain credentials from the configured source without
+printing them. On an ambiguous write, read the server before retrying a create.
 
-- the Linear team (name, key, ID) and the ID of each crew status;
-- where the Linear API key is read from;
-- the user's name, for the switch-over's prose;
-- the migrations log to append to, and a folder of past migration scripts to
-  copy from, if the user keeps them;
-- shell quirks and per-repository privacy tools.
+## Migration
 
-## Fixed facts
-
-- One Linear team; one project per repository.
-- Write through the GraphQL API (`https://api.linear.app/graphql`, header
-  `Authorization: <key>`, no "Bearer"). Read the key fresh from where `local.md`
-  says on every run (a shell's environment can hold a stale, revoked key). Never
-  print it. The Linear MCP tools are fine for spot-check reads.
-- Every comment you post starts with `[driver]`: Linear shows it under the
-  user's account, and the driver treats any unprefixed comment as the user's
-  reply.
-- [template.py](template.py) is a starting point for the migration script:
-  quoting helpers, a dry run, creation that saves the id map after every issue,
-  and a verifier. Adapt it; past migrations in the user's examples folder (from
-  `local.md`) are better starting points when one is close.
-
-## Steps
-
-1. **Locate and wait.** Find the repository and its Herdr tab
-   (`herdr agent list`, match `cwd`). Read the driver's pane
-   (`herdr agent read <pane> --source recent-unwrapped --lines 400`). Migrate
-   only while the driver and oracle are both idle; if either is working, wait
-   (poll until both have stayed idle across two checks a minute apart). Done
-   when both are idle and `git status` is clean.
-2. **Find where the plan lives.** It differs per repository: a ROADMAP, a PLAN,
-   the HANDOFF's remaining-work and open-questions sections, an audit doc, the
-   driver's pane and its scratch files (signed-off briefs can exist only in a
-   session scratch folder or an ignored evidence folder). Inventory every open
-   task or step, every open question, every rule that still binds future work
-   (with its later amendments), and every owner answer given in chat but not yet
-   in git. Done when each inventory item has a source location (`file:line` at
-   HEAD, or the pane capture).
-3. **Settle what only the user can decide**, one question per message, with a
-   recommendation: how far to move (usually a **full move**: the old plan frozen
-   as history, binding rules kept), and, when a chunk is in flight, whether to
-   migrate now or after it. Derive everything else from the sources and the crew
-   skill.
-4. **Write the script** (`--dry` prints the plan; the real run refuses if the
-   project exists and writes the id map). Then dry-run and check: every cited
-   range printed and read against its source, with no quote starting or ending
-   mid-sentence; unique issue keys; and the private-data scan (below). Done when
-   the dry run shows the intended issues and every range is correct.
-5. **Run, then verify against Linear**: each issue's title, status, parent,
-   milestone, priority and relations, and its full description (compare letters
-   and digits only, after the auto-link normalisation below). Done at zero
-   mismatches.
-6. **Oracle review.** Send a self-contained prompt to an oracle (the crew's
-   oracle pane, or any reviewing agent told
-   `Use the crew skill. Your role: oracle.`; ask the user which pane if unsure):
-   phase `diff`, read-only access rules, the script, id map and sources, the
-   choices to judge, and anything you got wrong and fixed. Triage as the crew's
-   driver does; fix, re-verify, `re-review` until sign-off; apply P3s without
-   another round. Anything you change after sign-off (the hand-over message, the
-   log) goes back for review too. Done at sign-off.
-7. **Hand over.** Add a row to the migrations log, if the user keeps one. Give
-   the user the message for the running driver's pane (re-read `linear.md`, take
-   the switch-over issue first, plus anything in flight), or, with no crew
-   running, the message that starts the steward before `CLAUDE.md` names Linear:
-   `/crew Your role: steward. Linear: team <KEY>, project <name>.` The
-   switch-over issue then adds the `## Crew` section for good. Add anything they
-   must do in Linear, under a "What I need from you" heading.
+1. Read the repository instructions, current handoff, Git state and live Linear
+   project. Preserve peer work and avoid a migration that competes with an active
+   edit of the planning source. Resolve any actual conflict with the owner.
+2. Inventory open tasks, questions, binding rules and later amendments. Record
+   each source location at a specific commit, or attributable owner message.
+   Include signed-off briefs and retained evidence where available. Distinguish
+   approved work from proposals, deferred work and owner holds.
+3. Resolve only missing owner choices that materially affect the migration;
+   honor existing authorization. Prepare the issues, full source quotations,
+   source-to-target state mapping, parent links, dependencies and milestones.
+4. Dry-run the import. Read every cited range against its source, retain complete
+   sentences, check unique script keys and scan all outgoing text for private data.
+5. Import and verify the full descriptions, status UUIDs, labels, parents,
+   milestones, priorities and relations against Linear. Audit status history when
+   reconciling or moving existing issues. List ordering does not establish a dependency.
+6. Follow any independent review requirements in the project's current instructions.
+   Fix discrepancies and verify the final saved state. Report review and empirical
+   verification separately; do not claim independent review when none occurred.
+7. Record the migration and give the user the project and next eligible issue.
+   Where repository reconciliation is needed, track a switch-over issue for the
+   existing queue pointers, historical-plan banner and preserved binding rules.
+   Do not prescribe a role configuration or send another session a message without
+   the user's authorization.
 
 ## Statuses and relations
 
-- **Backlog** is the default: the crew's steward shapes migrated work and
-  releases it to Ready on its next pass.
-- **The switch-over issue** ("Move planning from <source> to Linear") is Ready
-  at High priority, or Needs Input with a `[driver]` "resume" question when the
-  user has told the driver to hold. Its acceptance: a `## Crew` section in the
-  root `CLAUDE.md` (`Linear: team <KEY>, project <name>`); the old plan frozen
-  with a banner; binding rules kept, with every pointer to them (including code
-  comments) moved if they move; every statement naming the old plan as the queue
-  or authority reconciled (grep for it, inside the handoff too); the handoff's
-  chunk contract (stopping point, required checks) preserved; the user's
-  chat-only answers recorded. Out of scope: changing any rule's meaning, app
-  code.
-- **Work in flight** mirrors reality: the chunk's parent Building once a step
-  has started, finished steps Done (with the commit), a step waiting on the user
-  in Needs Input. A signed-off but unbuilt step is Ready, with its brief on the
-  issue. The switch-over blocks the next in-flight step whenever that step's
-  plan edits the old planning file.
-- **Ready only what the user already released**, such as signed-off steps;
-  everything else waits for the steward. Agreeing an order is not a release
-  while they have said hold. Enforce an agreed order with sequential `blocks`
-  relations, not creation order.
-- **Every Needs Input issue gets a dated `[driver]` question comment**: the
-  question, options, a recommendation, what it blocks. The driver detects the
-  answer as a newer unprefixed comment.
-- **Relations only where a source states them.** Check every
-  "Dependencies:"-style line in the sources against the relations you create,
-  both ways: a missing one and an invented one are both errors. A source's "or"
-  is not a blocker: when either of two paths closes an item, say so in the issue
-  instead of making one path block it.
+- Preserve source workflow semantics. Read the actual team's state names, UUIDs
+  and types, including distinctions such as Todo versus Ready. Map source work
+  according to its approved meaning; do not silently convert all unstarted work
+  to an implementation-ready state.
+- Work in flight mirrors reality: implementation started, candidate awaiting
+  delivery, decision blocked, or confirmed completion. Record completion evidence
+  and the applicable integration meaning; code existing is not sufficient.
+- A signed-off but unbuilt proposal remains subject to its owner release/hold.
+  Importing it, agreeing an order or creating a parent does not authorize children.
+- Keep actual unanswered questions explicit, with what each blocks and the
+  available recommendation. Preserve identifiable author provenance for agent
+  comments; an unprefixed comment is not automatically an owner's answer.
+- Create relations only where supported by a source. Check both missing and
+  invented blockers. An alternative path ("A or B") is described as an alternative,
+  not encoded as two mandatory blockers.
 
-## Descriptions
+## Descriptions and privacy
 
-- Quote sources verbatim as blockquotes, headed by a link to the exact lines at
-  the commit (`<repo>/blob/<sha>/<path>#L<a>-L<b>`). Prefer a pushed commit
-  where the file is identical. Quote the owner's answers from the pane with
-  their time.
-- Put each binding constraint, correction or decision on **every issue it
-  governs**: a driver reads only the issue it picks and its comments. That
-  includes closing and release rules, authorizations, tool boundaries (what a
-  browser check may request), and definitions a later step depends on (split a
-  brief and the later step still needs the earlier step's definitions).
-- Split a list of separate ideas into one issue each, each quoting the whole
-  list item. Never use a parent with sub-issues for undecided ideas: releasing a
-  parent authorizes all its children.
-- Linear mangles tables inside lists and quotes: render table rows as labelled
-  list items (`- **Column:** value`), one per line.
-- Nothing private leaves the repository: no personal names or record IDs from
-  registers or scratch notes (replace them and say so in the quote's header),
-  and no secret values. Run the repository's privacy scanner if it has one, and
-  check every value in its secrets files (`.env`, `fnox.toml` and the like)
-  against all outgoing text.
+- Quote sources verbatim with links to exact lines at the source commit. Prefer
+  a pushed commit where the file is identical. Attribute owner answers with time
+  and scope; do not turn an agent's recommendation into an owner's decision.
+- Put each governing constraint on every issue it affects: release rules, scope,
+  authorizations, tool boundaries and definitions. A later step must be readable
+  without the preceding agent's conversation.
+- Split separate ideas into separate issues. Preserve a whole source list item
+  when quoting it. Avoid a parent that accidentally implies approval of undecided work.
+- Linear may mangle tables in lists/quotes, and literal pipes inside cells can
+  truncate columns. Use labeled list items and verify every original field.
+- Keep private names, student/record identifiers and secret values out of outgoing
+  text. Redact private source quotations transparently. Use the repository's
+  privacy checks and inspect provenance; automated scans alone are insufficient.
 
-## Pitfalls already hit
+## Verification pitfalls
 
-- Pane captures carry UI glyphs (`⏺`, `⎿`, `❯` input echoes, odd spacing): strip
-  them with a regex and re-check the output.
-- Parsing numbered points out of a message: stop before the next numbered list
-  (a "suggested order" list once replaced corrections 1–4). Verify by each
-  point's expected opening words, never against the text you just wrote.
-- Two issues sharing a script key: the id map keeps the second, and relations
-  land on the wrong issue. Keep keys unique; assert it.
-- A milestone `sortOrder` of 0 is ignored: number them 1..n.
-- Linear auto-links bare domains when it saves a description (`example.com`
-  becomes `[example.com](<http://example.com>)`). Collapse such a link before
-  comparing only when its target equals its label.
-- Linear can fail mid-run with a non-JSON 5xx, and a failed create may still
-  have landed. Save the id map after every issue. Retry reads freely, but never
-  retry a create or relation blindly: on an ambiguous write, stop, list the
-  project's issues (and relations) on the server, and create only what is
-  missing.
-- Markdown formatters reflow fenced blocks tagged `markdown`: a two-line
-  `## Crew` example became one line. Tag such examples `text`.
-- Disclose your own mistakes in the re-review prompt; the oracle checks the fix
-  more carefully when told.
+- Keep creation keys unique and save IDs after every successful create. A failed
+  request may still have landed; never retry creation or relations blindly.
+- A milestone sortOrder of 0 may be ignored; use an explicit supported order.
+- Linear auto-links bare domains. Normalize only when the target equals the label
+  before comparing full saved descriptions with the source.
+- Source captures can contain UI glyphs and echoed input. Remove display artifacts
+  and recheck each quotation rather than accepting a regex extraction unchecked.
+- A numbered list extraction must stop before the next unrelated numbered list.
+  Verify expected source openings, not only the text generated by the script.
+- Use `text` for literal configuration examples; Markdown formatters may reflow
+  a fenced block tagged `markdown`.
